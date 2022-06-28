@@ -3,8 +3,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pyproj
 
-from shapely.geometry import Polygon, LineString
-from shapely.ops import nearest_points
+from shapely.geometry import Polygon, MultiPolygon, LineString, shape
+from shapely.ops import nearest_points, unary_union
 
 class Lanes:
     """
@@ -27,10 +27,13 @@ class Lanes:
 
         coords = []
         line_segments = self.data['geometry']
+
         for line in line_segments:
             coords_point = list(line.coords)
             coords.append(coords_point)
-        coords = np.array(coords, dtype=object)
+
+        coords = np.asarray(coords, dtype="object")
+        
         return coords
 
     def get_lane_boundaries(self, lane_id) -> list:
@@ -42,6 +45,7 @@ class Lanes:
         """
 
         coords = self.get_coordinates()
+
         for idx in range(len(self.data)):
             if self.data['lane_id'][idx] == lane_id:
                 if self.data['boundary_right'][idx]:
@@ -70,8 +74,8 @@ class Lanes:
         points_left = [left_string.interpolate(distance) for distance in distances_left]
         points_right = [right_string.interpolate(distance) for distance in distances_right] 
 
-        left_line = np.array(LineString(points_left))
-        right_line = np.array(LineString(points_right))
+        left_line = np.array(LineString(points_left).coords)
+        right_line = np.array(LineString(points_right).coords)
 
         return left_line, right_line
 
@@ -83,13 +87,12 @@ class Lanes:
         """
 
         left_line, right_line = self.interpolate_lane_boundaries(lane_id)
-
         assert len(left_line) == len(right_line), 'Error! The left and right boundaries do not consists of equal points.'
 
         midpoints = []
 
         for i in range(len(left_line)):
-            point = [((left_line[i][0]+right_line[i][0])/2), ((left_line[i][1]+right_line[i][1])/2) , ((left_line[i][0]+right_line[i][0])/2)]
+            point = [((left_line[i][0] + right_line[i][0]) / 2), ((left_line[i][1] + right_line[i][1]) / 2) , ((left_line[i][0] + right_line[i][0]) / 2)]
             midpoints.append(point)
 
         centerline_l = LineString(midpoints) #Preferable to return a LineString element?
@@ -137,7 +140,6 @@ class Lanes:
         for i in range(len(self.data['geometry'][0:8])): #remove [0:8], currently there for testing purposes. 
             if (self.data['lane_id'][i] != lane_id) and (self.data['lane_id'][i] not in potential_neighbours):
                 potential_neighbours.append(self.data['lane_id'][i])
-        print(potential_neighbours)
             
         for neighbour in potential_neighbours:
             left_line_other, right_line_other = self.interpolate_lane_boundaries(neighbour)
@@ -150,10 +152,21 @@ class Lanes:
                 left_neighbours.append(neighbour)
 
             distance2 = geod.geometry_length(LineString(nearest_points(right_line, left_line_other)))
-            if (distance2 <= d_threshold):
+            if distance2 <= d_threshold:
                 right_neighbours.append(neighbour)
 
         return left_neighbours, right_neighbours
+
+    def calculate_drivable_area(self, polygons):
+        """
+        Gets polygons of lane segments and calculates the drivable area for vehicles.py
+        :input polygons: Polygons of individual lane segments
+        :return: drivable_area: Multipolygon of fused lane segments
+        """
+        drivable_area = MultiPolygon(polygons)
+
+        return drivable_area
+
 
     def visualize_lanes(self, polygons):
         """
@@ -164,6 +177,17 @@ class Lanes:
         p = gpd.GeoSeries(polygons)    
         p.plot(alpha=0.15, edgecolor='blue')
     
+        return plt.show()
+
+    def visualize_drivable_area(self, drivable_area):
+        """
+        Visualizes the drivable area for vehicles
+        :param drivable_area: Multipolygon of fused lane segments
+        """
+
+        da = unary_union(drivable_area)
+        gpd.GeoSeries(da).plot(alpha=0.15)
+
         return plt.show()
 
 'Plotting Lanes'
@@ -187,7 +211,9 @@ for lane in lane_id:
     polygon = Polygon(Lane.convert_boundaries_to_polygon(lane_id))
     polygons.append(polygon)
     centerline = Lane.calculate_centerline(lane_id)
-    print(Lane.calculate_neighbouring_lanes(lane_id))
+    Lane.calculate_neighbouring_lanes(lane_id)
 
 Lane.visualize_lanes(polygons)    
+drivable_area = Lane.calculate_drivable_area(polygons)
+Lane.visualize_drivable_area(drivable_area)
     

@@ -1,1 +1,1 @@
-Repository for map anntotation of the View-of-Delft dataset. 
+Repository for map annotation of the View-of-Delft dataset. 
