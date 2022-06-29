@@ -12,6 +12,7 @@ export MA_SOURCED=
 # absolute path of this script file
 export MA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"; pwd)"
 export MA_DATA_DIR="${MA_DIR}/data"
+export MA_SRC_DIR="${MA_DIR}/src"
 
 conda activate map_annotation
 

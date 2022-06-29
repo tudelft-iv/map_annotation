@@ -11,114 +11,37 @@ class Lanes:
     Lanes class to handle all required lane operations
     """
 
-    def __init__(self, data):
+    def __init__(self):
         """
         Initialize lane geometry 
-        :param data: lane geometry with corresponding labels
         """
+        self.lanes = None
+        self.geod = pyproj.Geod(ellps="WGS84") # Convert coordinates to meters
 
-        self.data = data
+    def from_df(self, df):
+        #print(df)
+        self.lanes = {}
+        self.lane_ids = list(set(data['lane_id'].astype('int64').values))
+        for lane_id in self.lane_ids:
+            lane_data = df[df['lane_id'] == lane_id]
+            left_bound_data = lane_data[lane_data['boundary_left']].squeeze().to_dict()
+            right_bound_data = lane_data[lane_data['boundary_right']].squeeze().to_dict()
 
-    def get_coordinates(self) -> np.ndarray:
-        """
-        Gets coordinates points of the lane segment polylines
-        :return coords: np.ndarray with the coordinates of lane segments
-        """
+            left_boundary = RoadLine(left_bound_data['lane_id'], left_bound_data['road_type'], left_bound_data['geometry'])
+            right_boundary = RoadLine(left_bound_data['lane_id'], left_bound_data['road_type'], left_bound_data['geometry'])
+            
+            predecessors = right_bound_data['predecessors'] 
+            successors = right_bound_data['successors'] 
+            allowed_agents = right_bound_data['allowed_agents'] 
+            lane = Lane(lane_id, left_boundary, right_boundary, predecessors, successors, allowed_agents)
+            self.lanes[lane_id] = lane
+            #exit()
+        return self
 
-        coords = []
-        line_segments = self.data['geometry']
+    def __getitem__(self, idx):
+        return self.lanes[idx]
 
-        for line in line_segments:
-            coords_point = list(line.coords)
-            coords.append(coords_point)
-
-        coords = np.asarray(coords, dtype="object")
-        
-        return coords
-
-    def get_lane_boundaries(self, lane_id) -> list:
-        """
-        Retrieves the coordinates of the left and right boundaries of a lane segment 
-        :param lane_id: lane identifier for which to execute the operation
-        :return boundary_left: list with boundary points of the left side of the lane segment 
-        :return boundary_right: list with boundary points of the right side of the lane segment 
-        """
-
-        coords = self.get_coordinates()
-
-        for idx in range(len(self.data)):
-            if self.data['lane_id'][idx] == lane_id:
-                if self.data['boundary_right'][idx]:
-                    boundary_right = coords[idx]
-                if self.data['boundary_left'][idx]:
-                    boundary_left = coords[idx]
-        
-        return boundary_left, boundary_right
-
-    def interpolate_lane_boundaries(self, lane_id) -> np.ndarray:
-        """
-        Interpolates the left and right boundary of a lane segment
-        :param lane_id: lane identifier for which to execute the operation
-        :return left_line: np.ndarray of interpolated points along the left lane boundary
-        :return right_line: np.ndarray of points along the right lane boundary
-        """
-        boundary_left, boundary_right = self.get_lane_boundaries(lane_id)
-
-        left_string = LineString(boundary_left)
-        right_string = LineString(boundary_right) 
-
-        n_points = 100
-        distances_left = np.linspace(0, left_string.length, n_points)
-        distances_right = np.linspace(0, right_string.length, n_points)
-
-        points_left = [left_string.interpolate(distance) for distance in distances_left]
-        points_right = [right_string.interpolate(distance) for distance in distances_right] 
-
-        left_line = np.array(LineString(points_left).coords)
-        right_line = np.array(LineString(points_right).coords)
-
-        return left_line, right_line
-
-    def calculate_centerline(self, lane_id) -> np.ndarray:
-        """
-        Determines the lane centerline
-        :param lane_id: lane identifier for which to execute the operation
-        :return centerline: np.ndarray of the centerline coordinates of a lane segment
-        """
-
-        left_line, right_line = self.interpolate_lane_boundaries(lane_id)
-        assert len(left_line) == len(right_line), 'Error! The left and right boundaries do not consists of equal points.'
-
-        midpoints = []
-
-        for i in range(len(left_line)):
-            point = [((left_line[i][0] + right_line[i][0]) / 2), ((left_line[i][1] + right_line[i][1]) / 2) , ((left_line[i][0] + right_line[i][0]) / 2)]
-            midpoints.append(point)
-
-        centerline_l = LineString(midpoints) #Preferable to return a LineString element?
-        centerline = np.array(midpoints)
-
-        plt.scatter(left_line[:,0],left_line[:,1], label='left')
-        plt.scatter(right_line[:,0],right_line[:,1], label='right')
-        plt.scatter(centerline[:,0],centerline[:,1], label='center')
-        plt.legend()
-        plt.show()
-
-        return centerline
-
-    def convert_boundaries_to_polygon(self, lane_id) -> Polygon:
-        """
-        Gets road boundaries and generates a polygon of the lange segment
-        :param lane_id: lane identifier for which to execute the operation
-        :return polygon: Polygon of a lane segment
-        """
-
-        boundary_left, boundary_right = self.get_lane_boundaries(lane_id)
-        polygon = Polygon(np.vstack([boundary_left, boundary_right[-1], boundary_right[::-1], boundary_left[0]]))
-        
-        return polygon
-
-    def calculate_neighbouring_lanes(self, lane_id) -> list:
+    def get_neighbouring_lanes(self, lane_id, d_threshold=0.3) -> list:
         """
         Get all neighbouring lane segments of a given lane segment
         :param lane_id: lane identifier for which to execute the operation
@@ -126,6 +49,7 @@ class Lanes:
         :return right_neighbours: List of lane segment identifiers that are right neighbours
         """
 
+        # TODO clean function!!
         left_line, right_line = self.interpolate_lane_boundaries(lane_id)
         left_line = LineString(left_line)
         right_line = LineString(right_line)
@@ -133,9 +57,6 @@ class Lanes:
         potential_neighbours = []
         left_neighbours = []
         right_neighbours = []
-        d_threshold = 0.3 # [m]
-
-        geod = pyproj.Geod(ellps="WGS84") # Convert coordinates to meters
 
         for i in range(len(self.data['geometry'][0:8])): #remove [0:8], currently there for testing purposes. 
             if (self.data['lane_id'][i] != lane_id) and (self.data['lane_id'][i] not in potential_neighbours):
@@ -147,11 +68,11 @@ class Lanes:
             left_line_other = LineString(left_line_other)
             right_line_other = LineString(right_line_other)
 
-            distance1 = geod.geometry_length(LineString(nearest_points(left_line, right_line_other)))
+            distance1 = self.geod.geometry_length(LineString(nearest_points(left_line, right_line_other)))
             if distance1 <= d_threshold:
                 left_neighbours.append(neighbour)
 
-            distance2 = geod.geometry_length(LineString(nearest_points(right_line, left_line_other)))
+            distance2 = self.geod.geometry_length(LineString(nearest_points(right_line, left_line_other)))
             if distance2 <= d_threshold:
                 right_neighbours.append(neighbour)
 
@@ -167,28 +88,102 @@ class Lanes:
 
         return drivable_area
 
-
-    def visualize_lanes(self, polygons):
+    @staticmethod
+    def visualize_lanes(polygons):
         """
         Visualizes lane segments as polygons 
         :param polygons: list of Polygons of lane segments
         """
-
         p = gpd.GeoSeries(polygons)    
         p.plot(alpha=0.15, edgecolor='blue')
     
         return plt.show()
 
-    def visualize_drivable_area(self, drivable_area):
+    @staticmethod
+    def visualize_drivable_area(drivable_area):
         """
         Visualizes the drivable area for vehicles
         :param drivable_area: Multipolygon of fused lane segments
         """
-
         da = unary_union(drivable_area)
         gpd.GeoSeries(da).plot(alpha=0.15)
 
         return plt.show()
+
+
+class RoadLine:
+    def __init__(self, boundary_id, boundary_type, nodes):
+        self.id = boundary_id
+        self.type = boundary_type
+        self.nodes = nodes
+
+    def interpolate(self, n_points=100): 
+        string = LineString(self.nodes) 
+        distances = np.linspace(0, string.length, n_points)
+
+        points = [string.interpolate(distance) for distance in distances] 
+        line = np.array(LineString(points).coords)
+
+        return line
+
+
+class Lane:
+    def __init__(self,
+            lane_id,
+            left_boundary,
+            right_boundary,
+            predecessors,
+            successors,
+            allowed_agents,
+            lane_type=None):
+        self.id = lane_id 
+        self.predecessors = predecessors
+        self.successors = successors
+        self.allowed_agents = allowed_agents
+        self.type = lane_type
+        
+        self._left_boundary = left_boundary
+        self._right_boundary = right_boundary
+        self._centerline = None 
+
+    @property
+    def left_boundary(self):
+        return self._left_boundary
+
+    @left_boundary.setter
+    def left_boundary(self, data): 
+        self._left_boundary = data
+        self._centerline = None
+
+    @property
+    def right_boundary(self):
+        return self._right_boundary
+
+    @right_boundary.setter
+    def right_boundary(self, data): 
+        self._right_boundary = data
+        self._centerline = None
+
+    @property
+    def centerline(self):
+        if self._centerline is None:
+            self._centerline = self._calculate_centerline()
+
+        return self._centerline
+
+    def _calculate_centerline(self):
+        left_line = self.left_boundary.interpolate()
+        right_line = self.right_boundary.interpolate()
+        assert len(left_line) == len(right_line), 'Error! The left and right boundaries do not consist of equal points.'
+        
+        lr_line = np.stack([left_line, right_line], axis=-1)
+        midpoints = [[(left_coord + right_coord)/2 for left_coord, right_coord in point] for point in lr_line]
+
+        # TODO return as RoadLine
+        centerline = np.array(midpoints)
+        print(midpoints)
+
+        return centerline
 
 
 if __name__ == '__main__':
@@ -198,26 +193,24 @@ if __name__ == '__main__':
     df = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Lanes.gpkg')
     data = gpd.GeoDataFrame.explode(df, index_parts=False)
 
-    Lane = Lanes(data)
+    data = data[data['lane_id'] < 5]    
 
-    lane_id = []
+    #print(data)
+    lanes = Lanes().from_df(data)
+    print(lanes.lanes)
+    #lanes = Lanes(data)
 
-    for idx in range(len(data)):
-        if data['lane_id'][idx] not in lane_id:
-            lane_id.append(data['lane_id'][idx])
+    lane_ids = list(set(data['lane_id'].values))
+    #print(lane_id)
 
-    lane_id = lane_id[0:5] #for testing purposes, needs to be removed eventually.
+    #polygons = []
+    #for lane_id in lane_ids:
+    #    polygon = lanes.convert_boundaries_to_polygon(lane_id)
+    #    polygons.append(polygon)
+    #    centerline = lanes.calculate_centerline(lane_id)
+    #    lanes.calculate_neighbouring_lanes(lane_id)
 
-    polygons = []
-
-    for lane in lane_id:
-        lane_id = lane
-        polygon = Polygon(Lane.convert_boundaries_to_polygon(lane_id))
-        polygons.append(polygon)
-        centerline = Lane.calculate_centerline(lane_id)
-        Lane.calculate_neighbouring_lanes(lane_id)
-
-    Lane.visualize_lanes(polygons)    
-    drivable_area = Lane.calculate_drivable_area(polygons)
-    Lane.visualize_drivable_area(drivable_area)
+    #lanes.visualize_lanes(polygons)    
+    #drivable_area = lanes.calculate_drivable_area(polygons)
+    #lanes.visualize_drivable_area(drivable_area)
         
