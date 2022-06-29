@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pyproj
 
-from shapely.geometry import Polygon, MultiPolygon, LineString, shape
+from shapely.geometry import Polygon, MultiPolygon, LineString
 from shapely.ops import nearest_points, unary_union
 
 class Lanes:
@@ -98,11 +98,11 @@ class Lanes:
         centerline_l = LineString(midpoints) #Preferable to return a LineString element?
         centerline = np.array(midpoints)
 
-        # plt.scatter(left_line[:,0],left_line[:,1], label='left')
-        # plt.scatter(right_line[:,0],right_line[:,1], label='right')
-        # plt.scatter(centerline[:,0],centerline[:,1], label='center')
-        # plt.legend()
-        # plt.show()
+        plt.scatter(left_line[:,0],left_line[:,1], label='left')
+        plt.scatter(right_line[:,0],right_line[:,1], label='right')
+        plt.scatter(centerline[:,0],centerline[:,1], label='center')
+        plt.legend()
+        plt.show()
 
         return centerline
 
