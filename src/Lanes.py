@@ -190,30 +190,34 @@ class Lanes:
 
         return plt.show()
 
-'Plotting Lanes'
-df = gpd.read_file('~/Desktop/QGIS_files/annotation_layers_copy/Lanes.gpkg')
-data = gpd.GeoDataFrame.explode(df, index_parts=False)
 
-Lane = Lanes(data)
+if __name__ == '__main__':
+    import os
 
-lane_id = []
+    # plotting lanes
+    df = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Lanes.gpkg')
+    data = gpd.GeoDataFrame.explode(df, index_parts=False)
 
-for idx in range(len(data)):
-    if data['lane_id'][idx] not in lane_id:
-        lane_id.append(data['lane_id'][idx])
+    Lane = Lanes(data)
 
-lane_id = lane_id[0:5] #for testing purposes, needs to be removed eventually.
+    lane_id = []
 
-polygons = []
+    for idx in range(len(data)):
+        if data['lane_id'][idx] not in lane_id:
+            lane_id.append(data['lane_id'][idx])
 
-for lane in lane_id:
-    lane_id = lane
-    polygon = Polygon(Lane.convert_boundaries_to_polygon(lane_id))
-    polygons.append(polygon)
-    centerline = Lane.calculate_centerline(lane_id)
-    Lane.calculate_neighbouring_lanes(lane_id)
+    lane_id = lane_id[0:5] #for testing purposes, needs to be removed eventually.
 
-Lane.visualize_lanes(polygons)    
-drivable_area = Lane.calculate_drivable_area(polygons)
-Lane.visualize_drivable_area(drivable_area)
-    
+    polygons = []
+
+    for lane in lane_id:
+        lane_id = lane
+        polygon = Polygon(Lane.convert_boundaries_to_polygon(lane_id))
+        polygons.append(polygon)
+        centerline = Lane.calculate_centerline(lane_id)
+        Lane.calculate_neighbouring_lanes(lane_id)
+
+    Lane.visualize_lanes(polygons)    
+    drivable_area = Lane.calculate_drivable_area(polygons)
+    Lane.visualize_drivable_area(drivable_area)
+        
