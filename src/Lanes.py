@@ -1,10 +1,16 @@
+
+import utm
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
 import pyproj
+import scipy
+from scipy.interpolate import interp1d, UnivariateSpline
 
 from shapely.geometry import Polygon, MultiPolygon, LineString
 from shapely.ops import nearest_points, unary_union
+
+from utils import non_decreasing, non_increasing, monotonic
 
 class Lanes:
     """
@@ -27,8 +33,15 @@ class Lanes:
             left_bound_data = lane_data[lane_data['boundary_left']].squeeze().to_dict()
             right_bound_data = lane_data[lane_data['boundary_right']].squeeze().to_dict()
 
-            left_boundary = RoadLine(left_bound_data['lane_id'], left_bound_data['road_type'], left_bound_data['geometry'])
-            right_boundary = RoadLine(left_bound_data['lane_id'], left_bound_data['road_type'], left_bound_data['geometry'])
+            # TODO remove third coordinate (lon-lat frame does not allow for it)
+            left_boundary = RoadLine(
+                    left_bound_data['lane_id'],
+                    left_bound_data['road_type'],
+                    np.array(left_bound_data['geometry'].coords)[:,:2])
+            right_boundary = RoadLine(
+                    right_bound_data['lane_id'],
+                    right_bound_data['road_type'],
+                    np.array(right_bound_data['geometry'].coords)[:,:2])
             
             predecessors = right_bound_data['predecessors'] 
             successors = right_bound_data['successors'] 
@@ -111,20 +124,50 @@ class Lanes:
         return plt.show()
 
 
+def normalize_trajectory(trajectory):
+    traj_norm = trajectory - trajectory[0]
+    traj_vec01 = traj_norm[1] - traj_norm[0]
+    yaw = np.arctan2(*(traj_vec01 / np.linalg.norm(traj_vec01)))
+    print(traj_norm)
+    print(yaw)
+    exit()
+
+
 class RoadLine:
     def __init__(self, boundary_id, boundary_type, nodes):
         self.id = boundary_id
         self.type = boundary_type
         self.nodes = nodes
 
+    @property
+    def nodes_utm(self):
+        # nodes are in (lon, lat) format, so need to be reversed
+        nodes_utm = utm.from_latlon(self.nodes[:,1], self.nodes[:,0])
+        self.utm_zone = nodes_utm[2:]
+        return np.stack(nodes_utm[:2], axis=-1)
+
     def interpolate(self, n_points=100): 
-        string = LineString(self.nodes) 
-        distances = np.linspace(0, string.length, n_points)
+        #print(self.nodes)
+        x_new = np.linspace(np.min(self.nodes[:, 0]), np.max(self.nodes[:, 0]), n_points)
 
-        points = [string.interpolate(distance) for distance in distances] 
-        line = np.array(LineString(points).coords)
+        # check that x is increasing
+        x = self.nodes[:,0]
+        if not monotonic(x):
+            raise Exception('x must be monotonic.')
+        if non_increasing(x):
+            nodes = self.nodes[::-1]
+            flipped = True
+        else:
+            nodes = self.nodes
+            flipped = False
 
-        return line
+        f_interp = interp1d(nodes[:, 0], nodes[:, 1])
+        y_new = f_interp(x_new)
+        
+        nodes_interp = np.stack([x_new, y_new], axis=-1)
+        if flipped:
+            nodes_interp = nodes_interp[::-1]
+        return nodes_interp 
 
 
 class Lane:
@@ -180,7 +223,7 @@ class Lane:
         midpoints = [[(left_coord + right_coord)/2 for left_coord, right_coord in point] for point in lr_line]
 
         # TODO return as RoadLine
-        centerline = np.array(midpoints)
+        centerline = RoadLine(midpoints, )
         print(midpoints)
 
         return centerline
@@ -197,7 +240,10 @@ if __name__ == '__main__':
 
     #print(data)
     lanes = Lanes().from_df(data)
-    print(lanes.lanes)
+    #print(lanes.lanes)
+    lane_example = lanes.lanes[1]
+    #print(lane_example.centerline)
+    print(lane_example.left_boundary.interpolate())
     #lanes = Lanes(data)
 
     lane_ids = list(set(data['lane_id'].values))
