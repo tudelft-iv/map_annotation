@@ -12,6 +12,7 @@ from shapely.ops import nearest_points, unary_union
 
 from utils import non_decreasing, non_increasing, monotonic
 
+
 class Lanes:
     """
     Lanes class to handle all required lane operations
@@ -27,7 +28,7 @@ class Lanes:
     def from_df(self, df):
         #print(df)
         self.lanes = {}
-        self.lane_ids = list(set(data['lane_id'].astype('int64').values))
+        self.lane_ids = list(set(df['lane_id'].astype('int64').values))
         for lane_id in self.lane_ids:
             lane_data = df[df['lane_id'] == lane_id]
             left_bound_data = lane_data[lane_data['boundary_left']].squeeze().to_dict()
@@ -53,6 +54,24 @@ class Lanes:
 
     def __getitem__(self, idx):
         return self.lanes[idx]
+
+    def get_lanes_in_box(self, box, frame='lonlat'):
+        if frame == 'utm':
+            pass
+        lanes = self.lanes
+        print(self.lanes)
+        exit()
+        self._get_lanes_in_box(lanes, box)
+
+    def _get_lanes_in_box(self, lanes, box):
+        x_min = box[0,0]
+        x_max = box[1,0]
+        y_min = box[1,1]
+        y_max = box[0,1]
+
+        mask = (x_min <= lanes[:,0] < x_max) & (y_min <= lanes[:,1] < y_max)
+        pass
+        lanes_in_box = lanes[mask]
 
     def get_neighbouring_lanes(self, lane_id, d_threshold=0.3) -> list:
         """
@@ -124,15 +143,6 @@ class Lanes:
         return plt.show()
 
 
-def normalize_trajectory(trajectory):
-    traj_norm = trajectory - trajectory[0]
-    traj_vec01 = traj_norm[1] - traj_norm[0]
-    yaw = np.arctan2(*(traj_vec01 / np.linalg.norm(traj_vec01)))
-    print(traj_norm)
-    print(yaw)
-    exit()
-
-
 class RoadLine:
     def __init__(self, boundary_id, boundary_type, nodes):
         self.id = boundary_id
@@ -142,33 +152,37 @@ class RoadLine:
     @property
     def nodes_utm(self):
         # nodes are in (lon, lat) format, so need to be reversed
+        #print(self.nodes)
         nodes_utm = utm.from_latlon(self.nodes[:,1], self.nodes[:,0])
         self.utm_zone = nodes_utm[2:]
         return np.stack(nodes_utm[:2], axis=-1)
 
-    def interpolate(self, n_points=100): 
-        #print(self.nodes)
-        x_new = np.linspace(np.min(self.nodes[:, 0]), np.max(self.nodes[:, 0]), n_points)
-
-        # check that x is increasing
-        x = self.nodes[:,0]
-        if not monotonic(x):
-            raise Exception('x must be monotonic.')
-        if non_increasing(x):
-            nodes = self.nodes[::-1]
-            flipped = True
+    def _get_nodes_in_frame(self, frame):
+        if frame == 'lonlat':
+            return self.nodes
+        elif frame == 'utm':
+            return self.nodes_utm
         else:
-            nodes = self.nodes
-            flipped = False
+            raise ValueError(f'Frame "{frame}" not valid.')
 
-        f_interp = interp1d(nodes[:, 0], nodes[:, 1])
-        y_new = f_interp(x_new)
+    def interpolate(self, frame='utm', n_points=100, kind='linear'): 
+        nodes = self._get_nodes_in_frame(frame)
+        #print(self.nodes)
+        path_t = np.linspace(0, 1, nodes.size//2)
         
-        nodes_interp = np.stack([x_new, y_new], axis=-1)
-        if flipped:
-            nodes_interp = nodes_interp[::-1]
-        return nodes_interp 
+        path_x = nodes[:,0]
+        path_y = nodes[:,1]
+        #print(path_x.shape)
+        #print(path_y.shape)
+        r = nodes.T
+        #print(r.shape)
+        #print(path_t.shape)
+        spline = interp1d(path_t, r, kind=kind)
 
+        t = np.linspace(np.min(path_t), np.max(path_t), n_points)
+        r = spline(t)
+
+        return r.T 
 
 class Lane:
     def __init__(self,
@@ -215,16 +229,14 @@ class Lane:
         return self._centerline
 
     def _calculate_centerline(self):
-        left_line = self.left_boundary.interpolate()
-        right_line = self.right_boundary.interpolate()
+        left_line = self.left_boundary.interpolate(frame='lonlat')
+        right_line = self.right_boundary.interpolate(frame='lonlat')
         assert len(left_line) == len(right_line), 'Error! The left and right boundaries do not consist of equal points.'
         
         lr_line = np.stack([left_line, right_line], axis=-1)
         midpoints = [[(left_coord + right_coord)/2 for left_coord, right_coord in point] for point in lr_line]
 
-        # TODO return as RoadLine
-        centerline = RoadLine(midpoints, )
-        print(midpoints)
+        centerline = RoadLine(None, 'lane_centerline', np.array(midpoints))
 
         return centerline
 
@@ -235,16 +247,33 @@ if __name__ == '__main__':
     # plotting lanes
     df = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Lanes.gpkg')
     data = gpd.GeoDataFrame.explode(df, index_parts=False)
+    #print(data)
+    #exit()
 
-    data = data[data['lane_id'] < 5]    
+    #data = data[data['lane_id'] < 5]    
 
     #print(data)
     lanes = Lanes().from_df(data)
     #print(lanes.lanes)
-    lane_example = lanes.lanes[1]
-    #print(lane_example.centerline)
-    print(lane_example.left_boundary.interpolate())
+    for lane_id, lane in lanes.lanes.items():
+        #print(lane_example.centerline.nodes_utm)
+        try:
+            lbound_nodes = lane.left_boundary.nodes_utm
+            lbound = lane.left_boundary.interpolate()
+        except ValueError:
+            continue
+        #print(lbound.shape)
+        plt.title(f'{lane_id}')
+        plt.plot(lbound_nodes[:,0], lbound_nodes[:,1],'or')
+        plt.plot(lbound[:,0], lbound[:,1],'-k')
+        plt.xlabel('x')
+        plt.ylabel('y')
+        plt.show()
+    #exit()
     #lanes = Lanes(data)
+
+    #box = [[],[]] 
+    #lanes.get_lanes_in_box()
 
     lane_ids = list(set(data['lane_id'].values))
     #print(lane_id)
