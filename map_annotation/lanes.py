@@ -3,16 +3,13 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
 import pyproj
-import scipy
 import utm
-from scipy.interpolate import interp1d, UnivariateSpline, splrep, splev, LSQUnivariateSpline
-from scipy.optimize import curve_fit
 
+from scipy.interpolate import interp1d
 from shapely.geometry import Polygon, MultiPolygon, LineString, Point
 from shapely.ops import nearest_points, unary_union
 
 from polygons import Polygons
-
 from utils import non_decreasing, non_increasing, monotonic
 from transforms import CoordTransformer
 
@@ -26,7 +23,9 @@ class Lanes:
         Initialize lane geometry 
         """
         self.lanes = None
-        self.geod = pyproj.Geod(ellps="WGS84") # Convert coordinates to meters
+
+        # Convert coordinates to meters
+        self.geod = pyproj.Geod(ellps="WGS84")
 
     def from_df(self, df):
         """
@@ -34,6 +33,8 @@ class Lanes:
         """
         self.lanes = {}
         self.lane_ids = list(set(df['lane_id'].astype('int64').values))
+
+        # Retrieve lane data
         for lane_id in self.lane_ids:
             lane_data = df[df['lane_id'] == lane_id]
             left_bound_data = lane_data[lane_data['boundary_left']].squeeze().to_dict()
@@ -63,6 +64,7 @@ class Lanes:
 
     def get_frame_location(self, global_pose, map_extent):
 
+        # Determine location of interest
         bounding_box = np.array([[global_pose[0] - map_extent, global_pose[0] + map_extent],
                         [global_pose[1] - map_extent, global_pose[1] + map_extent]])
 
@@ -83,6 +85,7 @@ class Lanes:
         y_min = box[1,0]
         y_max = box[1,1]
 
+        # Checks for lanes that geometrically match the frame of interest
         lanes_in_box = []
         for lane_id in lanes:
             lane = lanes[lane_id]
@@ -96,111 +99,76 @@ class Lanes:
     def get_lane_connections(self, lane_id, element_ids):
         successors = self.lanes[lane_id].successors
         successors = successors.split(',')
-        #print(successors)
+        
+        lane_connectors = []
 
         connection_points1 = self.lanes[lane_id].centerline.nodes_utm[-3:]
         reference_point = self.lanes[lane_id].centerline.nodes_utm[-1]
-        d_threshold = 1 
+        dist_threshold = 1 # in [m]
 
         for element_id in range(1,element_ids):
-            print(element_id)
-            distance = LineString(nearest_points(Point(reference_point), Polygon(polygons[element_id].bounds.nodes_utm))).length
-            print('distance =', distance)
-            if distance < d_threshold: 
-                intersection_id = element_id
-                break
+            # Determines whether intersection geomatches lane end point
+            ref_point = Point(reference_point)
+            ref_polygon =  Polygon(polygons[element_id].bounds.nodes_utm)
+            dist = LineString(nearest_points(ref_point, ref_polygon)).length
 
-        for successor in successors:
-            successor = int(successor)
-            connection_points2 = self.lanes[successor].centerline.nodes_utm[:3]
+            if dist < dist_threshold: 
+                for successor in successors:
 
-            connection_points = [connection_points1, connection_points2]
-            connection_line = []
+                    successor = int(successor)
+                    connection_points2 = self.lanes[successor].centerline.nodes_utm[:3]
 
-            for line in connection_points:
-                for guiding_point in line:
-                    connection_line.append(guiding_point)
+                    connection_points = [connection_points1, connection_points2]
+                    connection_line = []
 
-            # connection_line = LineString(connection_line)
-            # connection_line.interpolate(connection_line.length)
-            # print(connection_line)
+                    for line in connection_points:
+                        for guiding_point in line:
+                            connection_line.append(guiding_point)
 
-            x_data = []
-            y_data = []
+                    x = []
+                    y = []
 
-            for point in connection_line:
-                x_data.append(point[0])
-                y_data.append(point[1])
+                    for point in connection_line:
+                        x.append(point[0])
+                        y.append(point[1])
 
-            x_data = np.array(x_data)
-            y_data = np.array(y_data)
+                    x = np.asarray(x)
+                    y = np.asarray(y)
 
-            # order = np.argsort((x_data))
-            # x_data = x_data[order]
-            # y_data = y_data[order] 
+                    xt, yt = self.interpolate_lane_connector(x, y)
 
-            x = x_data
-            y = y_data
-            # y = y + 0.2 * np.random.normal(size=len(x))
+                    # plt.plot(xt, yt)
+                    # plt.scatter(connection_points1[:,0], connection_points1[:,1], color='r')
+                    # plt.scatter(connection_points2[:,0], connection_points2[:,1], color='r')
+                    # plt.plot(connection_line.xy[0], connection_line.xy[1], 'k-')
+                    # plt.plot(polygons[element_id].bounds.nodes_utm[:,0], polygons[element_id].bounds.nodes_utm[:,1])
+                    # plt.show()
 
-            # def fit_func(x, a, b):
-            #     return a*np.cosh(x)+b
+                    connector_geom = LineString(zip(xt, yt))
 
-            # params, cov = curve_fit(fit_func, x, y)
-
-            # xnew = np.linspace(reference_point, connection_points2[0], 200)
-
-            # plt.plot(xnew, fit_func(xnew, *params))
-
-
-            def interpolation(x, y):
-
-                points = np.array([x, y]).T
-
-                # Linear length along the line:
-                distance = np.cumsum( np.sqrt(np.sum( np.diff(points, axis=0)**2, axis=1 )) )
-                distance = np.insert(distance, 0, 0)/distance[-1]
-
-                alpha = np.linspace(0, 1, 75)
-
-                interpolator =  interp1d(distance, points, kind='quadratic', axis=0)
-                interpolated_points = interpolator(alpha)
-
-                out_x = interpolated_points.T[0]
-                out_y = interpolated_points.T[1]
-
-                return out_x, out_y
-
-            xt, yt = interpolation(x, y)
-
-            plt.plot(xt, yt)
-
-
-            # t = [593208]
-            # spl = LSQUnivariateSpline(x_data, y_data, t)
-
-            # xnew = np.linspace(np.min(x_data), np.max(x_data), 100)
-            # ynew = spl(xnew)
-            # plt.plot(xnew, ynew)
-
-            # spline = splrep(x,y,k=2, s=0.033)
-            # x_range = np.linspace(np.min(x), np.max(x), 100)
-            # new_spline = splev(x_range, spline)
-            # plt.plot(x_range, new_spline)
-
-
-            plt.scatter(connection_points1[:,0], connection_points1[:,1], color='r')
-            plt.scatter(connection_points2[:,0], connection_points2[:,1], color='r')
-            # plt.plot(connection_line.xy[0], connection_line.xy[1], 'k-')
-            plt.plot(polygons[element_id].bounds.nodes_utm[:,0], polygons[element_id].bounds.nodes_utm[:,1])
-            plt.show()
-
-            connection_line = LineString(connection_line)
-            lane_connections = {'lane_id': lane_id, 'successor': successor, 'connection_line': connection_line.coords[:2]}
+                    lane_connections = {'lane_id': lane_id, 'successor': successor, 'connection_line': connector_geom}
+                    lane_connectors.append(lane_connections)
         
-        #print(lane_connections)
-        return lane_connections
+        return lane_connectors
 
+    def interpolate_lane_connector(self, x, y):
+
+        points = np.array([x, y]).T
+
+        # Linear length along the line:
+        distance = np.cumsum(np.sqrt(np.sum( np.diff(points, axis=0)**2, axis=1 )))
+        distance = np.insert(distance, 0, 0)/distance[-1]
+
+        n = np.linspace(0, 1, 75)
+
+        interpolator =  interp1d(distance, points, kind='quadratic', axis=0)
+        connector_nodes = interpolator(n)
+
+        out_x = connector_nodes.T[0]
+        out_y = connector_nodes.T[1]
+
+        return out_x, out_y
+    
     def get_neighbouring_lanes(self, lane_id, d_threshold) -> list:
         """
         Get all neighbouring lane segments of a given lane segment
