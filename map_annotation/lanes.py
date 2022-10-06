@@ -125,28 +125,39 @@ class Lanes:
                         for guiding_point in line:
                             connection_line.append(guiding_point)
 
-                    x = []
-                    y = []
-
-                    for point in connection_line:
-                        x.append(point[0])
-                        y.append(point[1])
-
-                    x = np.asarray(x)
-                    y = np.asarray(y)
+                    x = np.asarray([i[0] for i in connection_line])
+                    y = np.asarray([i[1] for i in connection_line])
 
                     xt, yt = self.interpolate_lane_connector(x, y)
 
-                    # plt.plot(xt, yt)
+                    # Remove points that do not lie within the intersection
+                    points = list(zip(xt, yt))
+                    pop = []
+
+                    for idx, point in enumerate(points):
+                        point = Point(point)
+                        # Use distance as contain/within methods have rounding errors
+                        if point.distance(ref_polygon) > 1e-3:
+                            pop.append(idx)
+
+                    pop.reverse()
+
+                    for to_pop in pop:
+                        points.pop(to_pop)
+
+                    connector_geom = LineString(points)
+
+                    # x_val = [i[0] for i in points]
+                    # y_val = [i[1] for i in points]
+            
+                    # plt.scatter(x_val, y_val)
+                    # plt.scatter(xt, yt, alpha=0.2)
                     # plt.scatter(connection_points1[:,0], connection_points1[:,1], color='r')
                     # plt.scatter(connection_points2[:,0], connection_points2[:,1], color='r')
-                    # plt.plot(connection_line.xy[0], connection_line.xy[1], 'k-')
                     # plt.plot(polygons[element_id].bounds.nodes_utm[:,0], polygons[element_id].bounds.nodes_utm[:,1])
                     # plt.show()
 
-                    connector_geom = LineString(zip(xt, yt))
-
-                    lane_connections = {'lane_id': lane_id, 'successor': successor, 'connection_line': connector_geom}
+                    lane_connections = {'lane_id': lane_id, 'intersection_id': element_id, 'successor': successor, 'connection_line': connector_geom}
                     lane_connectors.append(lane_connections)
         
         return lane_connectors
