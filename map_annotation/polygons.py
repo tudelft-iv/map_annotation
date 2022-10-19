@@ -42,17 +42,22 @@ class Polygons:
     def __getitem__(self, idx):
         return self.polygons[idx]
 
-    def get_polygons_in_box(self, global_pose, map_extent, frame='utm'):
+    def get_frame_location(self, global_pose, map_extent):
+    # Determine location of interest
+        bounding_box = np.array([[global_pose[0] + map_extent[0], global_pose[0] + map_extent[1]],
+                    [global_pose[1] + map_extent[2], global_pose[1] + map_extent[3]]])
+
+        return bounding_box
+
+    def get_polygons_in_box(self, polygons, global_pose, map_extent, frame='utm'):
         if frame == 'lon-lat':
             pass
-        polygons = self.polygons
 
-        self._get_polygons_in_box(polygons, global_pose, map_extent)
+        return self._get_polygons_in_box(polygons, global_pose, map_extent)
 
     def _get_polygons_in_box(self, polygons, global_pose, map_extent):
 
-        box = np.array([[global_pose[0] - map_extent, global_pose[0] + map_extent],
-                        [global_pose[1] - map_extent, global_pose[1] + map_extent]])
+        box = self.get_frame_location(global_pose, map_extent)
 
         x_min = box[0,0]
         x_max = box[0,1]
@@ -60,17 +65,15 @@ class Polygons:
         y_max = box[1,1]
         
         polygons_in_box = []
-        for element_id in polygons:
-            polygon = polygons[element_id]
-            for node in polygon.nodes:
-                if element_id in polygons_in_box:
+        for id in polygons.element_ids:
+            polygon = polygons[id]
+            for node in polygon.bounds.nodes_utm:
+                if id in polygons_in_box:
                     continue
                 if (x_min <= node[0] < x_max) & (y_min <= node[1] < y_max):
-                    polygons_in_box.append(element_id)
-        
-        polygons = [self.polygons[polygon] for polygon in polygons_in_box]
-        
-        return polygons
+                    polygons_in_box.append(id)
+
+        return polygons_in_box
 
 class Bounds:
     def __init__(self, element_id, road_type, nodes):
@@ -151,8 +154,6 @@ class Polygon:
 
         return bounds
 
-
-
 if __name__ == '__main__':
     import os
     import matplotlib.pyplot as plt
@@ -161,7 +162,10 @@ if __name__ == '__main__':
     data = gpd.GeoDataFrame.explode(df, index_parts=False)
     
     polygons = Polygons().from_df(data)
-    element_id = 1
+    #print(polygons.element_ids)
+    print(polygons[1].geometry.tolist()[0])
+    global_pose = 593201.79861197, 5763099.17704595 # Global coordinates of the prius at frame location within lanes file
+
 
 
     #x,y = polygons[element_id].geometry[0].exterior.coords.xy
