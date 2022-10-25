@@ -137,9 +137,7 @@ class Lanes:
                     dist = LineString(nearest_points(ref_point, ref_polygon)).length
 
                     if dist < dist_threshold: 
-                            connection_line =  [point for point in connection_points_1]
-                            for point in connection_points_2:
-                                connection_line.append(point)
+                            connection_line = np.concatenate((connection_points_1, connection_points_2), axis=0)
                         
                             x = np.asarray([i[0] for i in connection_line])
                             y = np.asarray([i[1] for i in connection_line])
@@ -193,10 +191,8 @@ class Lanes:
                 ref_point = ref_lane_start
                 connection_points = nearest_points(ref_lane_start, points)
                 if connection_points[1] == points[0]:
-                    print(1)
                     connection_points_2 = self.lanes[successor].centerline.nodes_utm[:3]
                 else:
-                    print(2)
                     connection_points_2 = np.flip(self.lanes[successor].centerline.nodes_utm[-3:], 0)
             else:
                 connection_points_1 = self.lanes[lane_id].centerline.nodes_utm[-3:]
@@ -204,10 +200,8 @@ class Lanes:
                 connection_points = nearest_points(ref_lane_end, points)
                 if connection_points[1] == points[0]:
                     connection_points_2 = self.lanes[successor].centerline.nodes_utm[:3]
-                    print(3)
                 else:
                     connection_points_2 = np.flip(self.lanes[successor].centerline.nodes_utm[-3:], 0)
-                    print(4)
 
             return ref_point, connection_points_1, connection_points_2
 
@@ -509,16 +503,17 @@ class Lane:
 if __name__ == '__main__':
     import os
 
-    # plotting lanes
-    df = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Lanes.gpkg')
+    df = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/polygons.gpkg')
     data = gpd.GeoDataFrame.explode(df, index_parts=False)
 
-    df2 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Intersections.gpkg')
+    df2 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/lanes.gpkg')
     data2 = gpd.GeoDataFrame.explode(df2, index_parts=False)
 
-    lanes = Lanes().from_df(data)
-    lane_ids = [1,2]
-    polygons = Polygons().from_df(data2)
+    polygons = Polygons().from_df(data)
+    print(polygons.element_ids)
+
+    lanes = Lanes().from_df(data2)
+    print(lanes)
 
     # for lane_id, lane in lanes.lanes.items():
     #     #print(lane_example.centerline.nodes_utm)
@@ -538,18 +533,18 @@ if __name__ == '__main__':
 
     #box = [[],[]] 
     
-    element_ids = 90
-    global_pose = 593254.12215427, 5763031.3443488 # Global coordinates of the prius at frame location within lanes file
-    map_extent = 100
-    polyline_resolution = 5
+    # element_ids = 90
+    # global_pose = 593254.12215427, 5763031.3443488 # Global coordinates of the prius at frame location within lanes file
+    # map_extent = 100
+    # polyline_resolution = 5
 
-    print(lanes.get_lanes_in_box(lanes=Lanes, global_pose=global_pose, map_extent=[-10, 10, -10, 10], frame="utm"))
-    # #lane_ids = list(set(data['lane_id'].values))
+    # print(lanes.get_lanes_in_box(lanes=Lanes, global_pose=global_pose, map_extent=[-10, 10, -10, 10], frame="utm"))
+    # # #lane_ids = list(set(data['lane_id'].values))
 
-    lane_ids = [20,21,22,23,24,25]
-    for id in lane_ids:
-        lanes.get_lane_connections(id, polygons, 0.5)
-    #print(lanes.discretize_lanes(lane_ids, polyline_resolution))
+    # lane_ids = [1,2,3,4,5,6,7]
+    # for id in lane_ids:
+    #     lanes.get_lane_connections(id, polygons, 0.5)
+    # #print(lanes.discretize_lanes(lane_ids, polyline_resolution))
 
 
         
