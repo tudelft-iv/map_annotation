@@ -6,9 +6,8 @@ import utm
 import math
 
 from scipy.interpolate import interp1d
-from shapely.geometry import Polygon, MultiPolygon, LineString, Point
+from shapely.geometry import Polygon, MultiPolygon, LineString, Point, MultiPoint
 from shapely.ops import nearest_points, unary_union
-
 
 from polygons import Polygons
 from utils import non_decreasing, non_increasing, monotonic
@@ -41,7 +40,6 @@ class Lanes:
             left_bound_data = lane_data[lane_data['boundary_left']].squeeze().to_dict()
             right_bound_data = lane_data[lane_data['boundary_right']].squeeze().to_dict()
 
-            # TODO remove third coordinate (lon-lat frame does not allow for it)
             left_boundary = RoadLine(
                     left_bound_data['lane_id'],
                     left_bound_data['road_type'],
@@ -64,20 +62,28 @@ class Lanes:
         return self.lanes[idx]
 
     def get_frame_location(self, global_pose, map_extent):
-
-        # Determine location of interest
+        """
+        Determine bounding box around a target_agent with the region of interest of a given scene.
+        """
         bounding_box = np.array([[global_pose[0] + map_extent[0], global_pose[0] + map_extent[1]],
                         [global_pose[1] + map_extent[2], global_pose[1] + map_extent[3]]])
 
         return bounding_box
 
     def get_lanes_in_box(self, lanes, global_pose, map_extent, frame='utm'):
+        """
+        Select the lanes that are within the specified bounding box.
+        """
         if frame == 'lon-lat':
             pass
         lanes = self.lanes
+        
         return self._get_lanes_in_box(lanes, global_pose, map_extent)
 
     def _get_lanes_in_box(self, lanes, global_pose, map_extent):
+        """
+        Select the lanes that are within the specified bounding box.
+        """
 
         box = self.get_frame_location(global_pose, map_extent)
 
@@ -86,7 +92,7 @@ class Lanes:
         y_min = box[1,0]
         y_max = box[1,1]
 
-        # Checks for lanes that geometrically match the frame of interest
+        # Checks for lanes that geometrically match the region of the frame of interest
         lanes_in_box = []
         for lane_id in self.lanes:
             lane = lanes[lane_id]
@@ -95,12 +101,18 @@ class Lanes:
                     continue
                 if (x_min <= node[0] < x_max) & (y_min <= node[1] < y_max):
                     lanes_in_box.append(lane_id)
+
         return lanes_in_box
 
-    def get_lane_connections(self, lane_id, polygons):
-        successors = self.lanes[lane_id].successors
-        print(lane_id, successors)
+    def get_lane_connections(self, lane_id, polygons, dist_thres):
+        """
+        Retrieve lane connections between lanes that connect with a specified lane of interest.
+        """
 
+        # Retrieve successors of a given lane
+        successors = self.lanes[lane_id].successors
+
+        # Select lanes with successors
         if not successors:
             pass
         elif successors is None:
@@ -109,69 +121,95 @@ class Lanes:
             successors = successors.split(',')
     
             lane_connectors = []
-
-            connection_points1 = self.lanes[lane_id].centerline.nodes_utm[-3:]
-            reference_point = self.lanes[lane_id].centerline.nodes_utm[-1]
-            
-            dist_threshold = 1 # in [m]
+            dist_threshold = dist_thres
             element_ids = polygons.element_ids
 
-            for element_id in element_ids:
-                # Determines whether intersection geomatches lane end point
-                ref_point = Point(reference_point)
-                ref_polygon =  Polygon(polygons[element_id].bounds.nodes_utm)
-                dist = LineString(nearest_points(ref_point, ref_polygon)).length
+            ref_lane_start = Point(self.lanes[lane_id].centerline.nodes_utm[0])
+            ref_lane_end = Point(self.lanes[lane_id].centerline.nodes_utm[-1])
 
-                if dist < dist_threshold: 
-                    for successor in successors:
+            for successor in successors:
+                successor = int(successor)
+                ref_point, connection_points_1, connection_points_2 = self.determine_connnection_points(lane_id, ref_lane_start, ref_lane_end, successor)
+    
+                for element_id in element_ids:
+                    # Determines whether intersection geomatches final lane node
+                    ref_polygon =  Polygon(polygons[element_id].bounds.nodes_utm)
+                    dist = LineString(nearest_points(ref_point, ref_polygon)).length
 
-                        successor = int(successor)
-                        connection_points2 = self.lanes[successor].centerline.nodes_utm[:3]
+                    if dist < dist_threshold: 
+                            connection_line =  [point for point in connection_points_1]
+                            for point in connection_points_2:
+                                connection_line.append(point)
+                        
+                            x = np.asarray([i[0] for i in connection_line])
+                            y = np.asarray([i[1] for i in connection_line])
 
-                        connection_points = [connection_points1, connection_points2]
-                        connection_line = []
+                            xt, yt = self.interpolate_lane_connector(x, y)
 
-                        for line in connection_points:
-                            for guiding_point in line:
-                                connection_line.append(guiding_point)
+                            # Remove points that do not lie within the intersection
+                            points = list(zip(xt, yt))
+                            pop = []
 
-                        x = np.asarray([i[0] for i in connection_line])
-                        y = np.asarray([i[1] for i in connection_line])
+                            for idx, point in enumerate(points):
+                                point = Point(point)
+                                # Use distance as contain/within methods have rounding errors
+                                if point.distance(ref_polygon) > 1e-3:
+                                    pop.append(idx)
 
-                        xt, yt = self.interpolate_lane_connector(x, y)
+                            pop.reverse()
 
-                        # Remove points that do not lie within the intersection
-                        points = list(zip(xt, yt))
-                        pop = []
+                            for to_pop in pop:
+                                points.pop(to_pop)
 
-                        for idx, point in enumerate(points):
-                            point = Point(point)
-                            # Use distance as contain/within methods have rounding errors
-                            if point.distance(ref_polygon) > 1e-3:
-                                pop.append(idx)
+                            connector_geom = LineString(points)
 
-                        pop.reverse()
+                            x_val = [i[0] for i in points]
+                            y_val = [i[1] for i in points]
+                    
+                            plt.scatter(x_val, y_val, color='g')
+                            plt.plot(x_val, y_val, color='g')
+                            plt.scatter(xt, yt, alpha=0.2)
+                            plt.scatter(connection_points_1[:,0], connection_points_1[:,1], color='r')
+                            plt.scatter(connection_points_2[:,0], connection_points_2[:,1], color='r')
+                            plt.plot(polygons[element_id].bounds.nodes_utm[:,0], polygons[element_id].bounds.nodes_utm[:,1])
+                            plt.show()
 
-                        for to_pop in pop:
-                            points.pop(to_pop)
-
-                        connector_geom = LineString(points)
-
-                        # x_val = [i[0] for i in points]
-                        # y_val = [i[1] for i in points]
-                
-                        # plt.scatter(x_val, y_val, color='g')
-                        # plt.plot(x_val, y_val, color='g')
-                        # plt.scatter(xt, yt, alpha=0.2)
-                        # plt.scatter(connection_points1[:,0], connection_points1[:,1], color='r')
-                        # plt.scatter(connection_points2[:,0], connection_points2[:,1], color='r')
-                        # plt.plot(polygons[element_id].bounds.nodes_utm[:,0], polygons[element_id].bounds.nodes_utm[:,1])
-                        # plt.show()
-
-                        lane_connections = {'connector_id': f'{lane_id}_{successor}', 'intersection_id': element_id, 'connection_line': connector_geom}
-                        lane_connectors.append(lane_connections)
+                            lane_connections = {'connector_id': f'{lane_id}_{successor}', 'intersection_id': element_id, 'connection_line': connector_geom}
+                            lane_connectors.append(lane_connections)
             
             return lane_connectors
+
+    def determine_connnection_points(self, lane_id, ref_lane_start, ref_lane_end, successor):
+
+            suc_lane_start = Point(self.lanes[successor].centerline.nodes_utm[0])
+            suc_lane_end = Point(self.lanes[successor].centerline.nodes_utm[-1])
+
+            points = MultiPoint([suc_lane_start, suc_lane_end])
+            dist1 = LineString(nearest_points(ref_lane_start, points)).length
+            dist2 = LineString(nearest_points(ref_lane_end, points)).length
+
+            if dist1 < dist2:
+                connection_points_1 = np.flip(self.lanes[lane_id].centerline.nodes_utm[:3], 0)
+                ref_point = ref_lane_start
+                connection_points = nearest_points(ref_lane_start, points)
+                if connection_points[1] == points[0]:
+                    print(1)
+                    connection_points_2 = self.lanes[successor].centerline.nodes_utm[:3]
+                else:
+                    print(2)
+                    connection_points_2 = np.flip(self.lanes[successor].centerline.nodes_utm[-3:], 0)
+            else:
+                connection_points_1 = self.lanes[lane_id].centerline.nodes_utm[-3:]
+                ref_point = ref_lane_end
+                connection_points = nearest_points(ref_lane_end, points)
+                if connection_points[1] == points[0]:
+                    connection_points_2 = self.lanes[successor].centerline.nodes_utm[:3]
+                    print(3)
+                else:
+                    connection_points_2 = np.flip(self.lanes[successor].centerline.nodes_utm[-3:], 0)
+                    print(4)
+
+            return ref_point, connection_points_1, connection_points_2
 
     def discretize_connectors(self, lane_connectors, polyline_resolution):
         pose_lists = []
@@ -392,7 +430,7 @@ class RoadLine:
         else:
             raise ValueError(f'Frame "{frame}" not valid.')
 
-    def interpolate(self, frame='utm', n_points=10, kind='linear'): 
+    def interpolate(self, frame='utm', n_points=100, kind='linear'): 
         nodes = self._get_nodes_in_frame(frame)
         #print(self.nodes)
         path_t = np.linspace(0, 1, nodes.size//2)
@@ -505,11 +543,12 @@ if __name__ == '__main__':
     map_extent = 100
     polyline_resolution = 5
 
-    print(lanes[30].successors)
-
-    # print(lanes.get_lanes_in_box(lanes=Lanes, global_pose=global_pose, map_extent=[-10, 10, -10, 10], frame="utm"))
+    print(lanes.get_lanes_in_box(lanes=Lanes, global_pose=global_pose, map_extent=[-10, 10, -10, 10], frame="utm"))
     # #lane_ids = list(set(data['lane_id'].values))
-    # lanes.get_lane_connections(88, polygons)
+
+    lane_ids = [20,21,22,23,24,25]
+    for id in lane_ids:
+        lanes.get_lane_connections(id, polygons, 0.5)
     #print(lanes.discretize_lanes(lane_ids, polyline_resolution))
 
 
