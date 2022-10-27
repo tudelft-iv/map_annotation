@@ -132,53 +132,54 @@ class Lanes:
                 ref_point, connection_points_1, connection_points_2 = self.determine_connnection_points(lane_id, ref_lane_start, ref_lane_end, successor)
     
                 for element_id in element_ids:
-                    # Determines whether intersection geomatches final lane node
-                    ref_polygon =  Polygon(polygons[element_id].bounds.nodes_utm)
-                    dist = LineString(nearest_points(ref_point, ref_polygon)).length
+                    # Filter polygons to intersections only
+                     if polygons[element_id].type.tolist()[0] == 'intersection':
+                        # Determines whether intersection geomatches final lane node
+                        ref_polygon =  Polygon(polygons[element_id].bounds.nodes_utm)
+                        dist = LineString(nearest_points(ref_point, ref_polygon)).length
 
-                    if dist < dist_threshold: 
-                            connection_line = np.concatenate((connection_points_1, connection_points_2), axis=0)
+                        if dist < dist_threshold: 
+                                connection_line = np.concatenate((connection_points_1, connection_points_2), axis=0)
+                            
+                                x = np.asarray([i[0] for i in connection_line])
+                                y = np.asarray([i[1] for i in connection_line])
+
+                                xt, yt = self.interpolate_lane_connector(x, y)
+
+                                # Remove points that do not lie within the intersection
+                                points = list(zip(xt, yt))
+                                pop = []
+
+                                for idx, point in enumerate(points):
+                                    point = Point(point)
+                                    # Use distance as contain/within methods have rounding errors
+                                    if point.distance(ref_polygon) > 1e-3:
+                                        pop.append(idx)
+
+                                pop.reverse()
+
+                                for to_pop in pop:
+                                    points.pop(to_pop)
+
+                                connector_geom = LineString(points)
+
+                                x_val = [i[0] for i in points]
+                                y_val = [i[1] for i in points]
                         
-                            x = np.asarray([i[0] for i in connection_line])
-                            y = np.asarray([i[1] for i in connection_line])
+                                # plt.scatter(x_val, y_val, color='g')
+                                # plt.plot(x_val, y_val, color='g')
+                                # plt.scatter(xt, yt, alpha=0.2)
+                                # plt.scatter(connection_points_1[:,0], connection_points_1[:,1], color='r')
+                                # plt.scatter(connection_points_2[:,0], connection_points_2[:,1], color='r')
+                                # plt.plot(polygons[element_id].bounds.nodes_utm[:,0], polygons[element_id].bounds.nodes_utm[:,1])
+                                # plt.show()
 
-                            xt, yt = self.interpolate_lane_connector(x, y)
-
-                            # Remove points that do not lie within the intersection
-                            points = list(zip(xt, yt))
-                            pop = []
-
-                            for idx, point in enumerate(points):
-                                point = Point(point)
-                                # Use distance as contain/within methods have rounding errors
-                                if point.distance(ref_polygon) > 1e-3:
-                                    pop.append(idx)
-
-                            pop.reverse()
-
-                            for to_pop in pop:
-                                points.pop(to_pop)
-
-                            connector_geom = LineString(points)
-
-                            x_val = [i[0] for i in points]
-                            y_val = [i[1] for i in points]
-                    
-                            plt.scatter(x_val, y_val, color='g')
-                            plt.plot(x_val, y_val, color='g')
-                            plt.scatter(xt, yt, alpha=0.2)
-                            plt.scatter(connection_points_1[:,0], connection_points_1[:,1], color='r')
-                            plt.scatter(connection_points_2[:,0], connection_points_2[:,1], color='r')
-                            plt.plot(polygons[element_id].bounds.nodes_utm[:,0], polygons[element_id].bounds.nodes_utm[:,1])
-                            plt.show()
-
-                            lane_connections = {'connector_id': f'{lane_id}_{successor}', 'intersection_id': element_id, 'connection_line': connector_geom}
-                            lane_connectors.append(lane_connections)
+                                lane_connections = {'connector_id': f'{lane_id}_{successor}', 'intersection_id': element_id, 'connection_line': connector_geom}
+                                lane_connectors.append(lane_connections)
             
             return lane_connectors
 
     def determine_connnection_points(self, lane_id, ref_lane_start, ref_lane_end, successor):
-
             suc_lane_start = Point(self.lanes[successor].centerline.nodes_utm[0])
             suc_lane_end = Point(self.lanes[successor].centerline.nodes_utm[-1])
 
@@ -190,7 +191,7 @@ class Lanes:
                 connection_points_1 = np.flip(self.lanes[lane_id].centerline.nodes_utm[:3], 0)
                 ref_point = ref_lane_start
                 connection_points = nearest_points(ref_lane_start, points)
-                if connection_points[1] == points[0]:
+                if connection_points[1] == points.geoms[0]:
                     connection_points_2 = self.lanes[successor].centerline.nodes_utm[:3]
                 else:
                     connection_points_2 = np.flip(self.lanes[successor].centerline.nodes_utm[-3:], 0)
@@ -198,7 +199,7 @@ class Lanes:
                 connection_points_1 = self.lanes[lane_id].centerline.nodes_utm[-3:]
                 ref_point = ref_lane_end
                 connection_points = nearest_points(ref_lane_end, points)
-                if connection_points[1] == points[0]:
+                if connection_points[1] == points.geoms[0]:
                     connection_points_2 = self.lanes[successor].centerline.nodes_utm[:3]
                 else:
                     connection_points_2 = np.flip(self.lanes[successor].centerline.nodes_utm[-3:], 0)
@@ -332,9 +333,7 @@ class Lanes:
         left_neighbours = []
         right_neighbours = []
 
-        # TODO revise lane numbers of Hidde's annotations. 
-        for i in range(1, 120):
-        #for i in range(1,len(self.lanes)): 
+        for i in range(1,len(self.lanes)): 
             if self.lanes[lane_id].left_boundary.type == 2 or self.lanes[lane_id].right_boundary.type == 2:
                 if self.lanes[i].left_boundary.type == 2 or self.lanes[i].right_boundary.type == 2:
                     if (self.lanes[i].id != lane_id) and (self.lanes[i].id not in potential_neighbours):
@@ -503,48 +502,17 @@ class Lane:
 if __name__ == '__main__':
     import os
 
-    df = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/polygons.gpkg')
+    df = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/polygons_preprocessed.gpkg')
     data = gpd.GeoDataFrame.explode(df, index_parts=False)
 
-    df2 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/lanes.gpkg')
+    df2 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/lanes_preprocessed.gpkg')
     data2 = gpd.GeoDataFrame.explode(df2, index_parts=False)
 
     polygons = Polygons().from_df(data)
-    print(polygons.element_ids)
-
     lanes = Lanes().from_df(data2)
-    print(lanes)
+    print(lanes[6].successors)
 
-    # for lane_id, lane in lanes.lanes.items():
-    #     #print(lane_example.centerline.nodes_utm)
-    #     try:
-    #         lbound_nodes = lane.left_boundary.nodes_utm
-    #         lbound = lane.left_boundary.interpolate()
-    #     except ValueError:
-    #         continue
-    #     #print(lbound.shape)
-    #     plt.title(f'{lane_id}')
-    #     plt.plot(lbound_nodes[:,0], lbound_nodes[:,1],'or')
-    #     plt.plot(lbound[:,0], lbound[:,1],'-k')
-    #     plt.xlabel('x')
-    #     plt.ylabel('y')
-    #     plt.show()
-    
-
-    #box = [[],[]] 
-    
-    # element_ids = 90
-    # global_pose = 593254.12215427, 5763031.3443488 # Global coordinates of the prius at frame location within lanes file
-    # map_extent = 100
-    # polyline_resolution = 5
-
-    # print(lanes.get_lanes_in_box(lanes=Lanes, global_pose=global_pose, map_extent=[-10, 10, -10, 10], frame="utm"))
-    # # #lane_ids = list(set(data['lane_id'].values))
-
-    # lane_ids = [1,2,3,4,5,6,7]
-    # for id in lane_ids:
-    #     lanes.get_lane_connections(id, polygons, 0.5)
-    # #print(lanes.discretize_lanes(lane_ids, polyline_resolution))
+    lanes.get_lane_connections(236, polygons, 0.5)
 
 
         

@@ -1,14 +1,12 @@
 
-from fiona import bounds
 import pyproj
 import utm
 
 import numpy as np
 import geopandas as gpd
-from transforms import CoordTransformer
 
+from transforms import CoordTransformer
 from shapely.geometry import Polygon
-import shapely
 
 class Polygons:
     """
@@ -33,8 +31,9 @@ class Polygons:
             road_type = geometry_data['road_type']
             allowed_agents = geometry_data['allowed_agents']
             geometry = geometry_data['geometry']
+            type = geometry_data['type']
             
-            self.polygon = Polygon(element_id, road_type, allowed_agents, geometry)
+            self.polygon = Polygon(element_id, road_type, allowed_agents, geometry, type)
             self.polygons[element_id] = self.polygon
         
         return self
@@ -127,15 +126,14 @@ class Bounds:
 
         return r.T 
 
-        
-
 
 class Polygon:
-    def __init__(self, element_id, road_type, allowed_agents, geometry):
+    def __init__(self, element_id, road_type, allowed_agents, geometry, type):
         self.id = element_id
         self.type = road_type
         self.allowed_agents = allowed_agents
         self.geometry = geometry
+        self.type = type
         self._bounds = None
 
     @property
@@ -158,23 +156,20 @@ if __name__ == '__main__':
     import os
     import matplotlib.pyplot as plt
 
-    df = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Intersections.gpkg')
-    data = gpd.GeoDataFrame.explode(df, index_parts=False)
+    # data['type'] = 'intersection'
+    # data2['type'] = 'crosswalk'
+    # #print(data)
+
+    # polygons = data.append(data2)
     
-    polygons = Polygons().from_df(data)
+    # polygons.to_file('polygons.gpkg', driver='GPKG', layer='polygons')
+    
+    # intersections = Polygons().from_df(data)
+    # crosswalks = Polygons().from_df(data2)
+
+    # print(intersections.element_ids)
+    # print(crosswalks.element_ids)
+
+
     #print(polygons.element_ids)
-    print(polygons[1].geometry.tolist()[0])
     global_pose = 593201.79861197, 5763099.17704595 # Global coordinates of the prius at frame location within lanes file
-
-
-
-    #x,y = polygons[element_id].geometry[0].exterior.coords.xy
-    #print(np.array(x), 'and', np.array(y))
-
-    # plt.scatter(x,y)
-    # plt.plot(x,y)
-    # plt.show()
-    #
-    # plt.show()
-
-    #print(nodes)

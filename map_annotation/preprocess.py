@@ -3,39 +3,38 @@ import os
 
 import numpy as np
 import geopandas as gpd
-
+import pandas as pd
 
 """Pre-processing of polygons"""
 # Load different polygon types
-df = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Intersections.gpkg')
+df = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Intersections_raw.gpkg')
 intersections = gpd.GeoDataFrame.explode(df, index_parts=False)
 
-df2 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Crosswalks.gpkg')
+df2 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Crosswalks_raw.gpkg')
 crosswalks = gpd.GeoDataFrame.explode(df2, index_parts=False)
 
-df3 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Offroad.gpkg')
+df3 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Offroad_raw.gpkg')
 offroad = gpd.GeoDataFrame.explode(df3, index_parts=False)
 
 # Assign type to polygon type
 intersections['type'] = 'intersection'
 crosswalks['type'] = 'crosswalk'
-offroad['type'] = 'off-road'
+offroad['type'] = 'off_road'
 
 #Create single file with all polygons
-polygons = intersections.append(crosswalks)
-polygons = polygons.append(offroad)
+polygons = pd.concat([intersections, crosswalks, offroad], ignore_index=True)
 
 # Assign correct element_ids
 for idx, id in enumerate(polygons['element_id']):
     polygons['element_id'][idx] = idx + 1
 
 # Create new file with pre-processed annotations
-polygons.to_file('data/polygons.gpkg', driver='GPKG', layer='polygons')
+polygons.to_file('data/polygons_preprocessed.gpkg', driver='GPKG', layer='polygons')
 
 """-------------------------------------------------------------------"""
 """Pre-processing of lanes"""
 # Load lane segments
-df4 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/lanes_raw_2.gpkg')
+df4 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Lanes_raw.gpkg')
 lanes = gpd.GeoDataFrame.explode(df4, index_parts=False)
 
 # Assign correct element_ids
@@ -61,7 +60,7 @@ for item in ['successors', 'predecessors']:
                 id = int(id)
                 idx = old_ids.index(id)
                 updated_ids.append(new_ids[idx])
-            lanes[item][i] = updated_ids
+            lanes[item][i] = str(updated_ids)[1:-1]
 
 # Run label consistency checks on lane annotations
 for col, item in lanes.iterrows():
@@ -81,5 +80,7 @@ for col, item in lanes.iterrows():
 
 print('Done, all good to go!')
 
+# print(lanes)
+# exit()
 # Create new file with pre-processed annotations
-polygons.to_file('data/lanes.gpkg', driver='GPKG', layer='lanes')
+lanes.to_file('data/lanes_preprocessed.gpkg', driver='GPKG', layer='lanes')
