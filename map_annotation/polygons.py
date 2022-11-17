@@ -1,9 +1,12 @@
 
 import pyproj
 import utm
+import math
 
 import numpy as np
 import geopandas as gpd
+
+import matplotlib.pyplot as plt
 
 from transforms import CoordTransformer
 from shapely.geometry import Polygon
@@ -42,11 +45,35 @@ class Polygons:
         return self.polygons[idx]
 
     def get_frame_location(self, global_pose, map_extent):
-    # Determine location of interest
-        bounding_box = np.array([[global_pose[0] + map_extent[0], global_pose[0] + map_extent[1]],
-                    [global_pose[1] + map_extent[2], global_pose[1] + map_extent[3]]])
+        """
+        Determine bounding box around a target_agent with the region of interest of a given scene.
+        """
+        x, y, theta = global_pose[0], global_pose[1], global_pose[2]
+
+        top_left = [x + map_extent[0], y + map_extent[3]]
+        bottom_left = [x + map_extent[0], y + map_extent[2]]
+        bottom_right = [x + map_extent[1], y + map_extent[2]]
+        top_right = [x + map_extent[1], y + map_extent[3]]
+
+        rectangle = [top_left, top_right, bottom_left, bottom_right]
+        rectangle_rotated = [self.rotate_point(global_pose[:2], point, theta) for point in rectangle]
+        
+        x_min, y_min = np.min(rectangle_rotated,axis=0)
+        x_max, y_max = np.max(rectangle_rotated,axis=0)
+
+        bounding_box = np.array([[x_min, x_max],[y_min, y_max]])
 
         return bounding_box
+
+    def rotate_point(self, point, origin, angle):
+
+        ox, oy = origin
+        px, py = point
+
+        qx = ox + math.cos(angle) * (px - ox) - math.sin(angle) * (py - oy)
+        qy = oy + math.sin(angle) * (px - ox) + math.cos(angle) * (py - oy)
+        
+        return qx, qy
 
     def get_polygons_in_box(self, polygons, global_pose, map_extent, frame='utm'):
         if frame == 'lon-lat':
@@ -71,6 +98,9 @@ class Polygons:
                     continue
                 if (x_min <= node[0] < x_max) & (y_min <= node[1] < y_max):
                     polygons_in_box.append(id)
+
+        # for element_id in polygons_in_box:
+        #     plt.plot(polygons[element_id].bounds.nodes_utm[:,0], polygons[element_id].bounds.nodes_utm[:,1])
 
         return polygons_in_box
 

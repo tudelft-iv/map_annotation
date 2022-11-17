@@ -1,5 +1,6 @@
 import geopandas as gpd
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import numpy as np
 import pyproj
 import utm
@@ -65,10 +66,33 @@ class Lanes:
         """
         Determine bounding box around a target_agent with the region of interest of a given scene.
         """
-        bounding_box = np.array([[global_pose[0] + map_extent[0], global_pose[0] + map_extent[1]],
-                        [global_pose[1] + map_extent[2], global_pose[1] + map_extent[3]]])
+        x, y, theta = global_pose[0], global_pose[1], global_pose[2]
+
+        top_left = [x + map_extent[0], y + map_extent[3]]
+        bottom_left = [x + map_extent[0], y + map_extent[2]]
+        bottom_right = [x + map_extent[1], y + map_extent[2]]
+        top_right = [x + map_extent[1], y + map_extent[3]]
+
+        rectangle = [top_left, top_right, bottom_left, bottom_right]
+        rectangle_rotated = [self.rotate_point(global_pose[:2], point, theta) for point in rectangle]
+        
+        x_min, y_min = np.min(rectangle_rotated,axis=0)
+        x_max, y_max = np.max(rectangle_rotated,axis=0)
+
+        bounding_box = np.array([[x_min, x_max],[y_min, y_max]])
 
         return bounding_box
+
+    def rotate_point(self, point, origin, angle):
+
+        ox, oy = origin
+        px, py = point
+
+        qx = ox + math.cos(angle) * (px - ox) - math.sin(angle) * (py - oy)
+        qy = oy + math.sin(angle) * (px - ox) + math.cos(angle) * (py - oy)
+        
+        return qx, qy
+
 
     def get_lanes_in_box(self, lanes, global_pose, map_extent, frame='utm'):
         """
@@ -98,8 +122,8 @@ class Lanes:
             lane = lanes[lane_id]
             for node in lane.centerline.nodes_utm:
                 if lane_id in lanes_in_box:
-                    continue
-                if (x_min <= node[0] < x_max) & (y_min <= node[1] < y_max):
+                    pass
+                elif (x_min <= node[0] < x_max) & (y_min <= node[1] < y_max):
                     lanes_in_box.append(lane_id)
 
         return lanes_in_box
@@ -163,8 +187,8 @@ class Lanes:
 
                                 connector_geom = LineString(points)
 
-                                x_val = [i[0] for i in points]
-                                y_val = [i[1] for i in points]
+                                # x_val = [i[0] for i in points]
+                                # y_val = [i[1] for i in points]
                         
                                 # plt.scatter(x_val, y_val, color='g')
                                 # plt.plot(x_val, y_val, color='g')
@@ -176,7 +200,7 @@ class Lanes:
 
                                 lane_connections = {'connector_id': f'{lane_id}_{successor}', 'intersection_id': element_id, 'connection_line': connector_geom}
                                 lane_connectors.append(lane_connections)
-            
+
             return lane_connectors
 
     def determine_connnection_points(self, lane_id, ref_lane_start, ref_lane_end, successor):
@@ -370,15 +394,34 @@ class Lanes:
 
         return drivable_area
 
-    @staticmethod
-    def visualize_lanes(polygons):
+    def visualize_lanes(self, lanes, polygons, global_pose, map_extent):
         """
         Visualizes lane segments as polygons 
         :param polygons: list of Polygons of lane segments
         """
-        p = gpd.GeoSeries(polygons)    
-        p.plot(alpha=0.15, edgecolor='blue')
-    
+
+        ids = lanes.get_lanes_in_box(lanes, global_pose, map_extent)
+
+        for id in ids:
+            boundary_left = lanes[id].left_boundary.nodes_utm
+            boundary_right = lanes[id].right_boundary.nodes_utm
+            left_line, right_line, center_line = LineString(lanes[id].left_boundary.nodes_utm), LineString(lanes[id].right_boundary.nodes_utm),  LineString(lanes[id].centerline.nodes_utm)
+
+            # plt.plot(*left_line.xy, c='b')
+            # plt.plot(*right_line.xy, c='b')
+            plt.plot(*center_line.xy, c='r')
+
+
+            road = np.vstack([boundary_left, boundary_right[-1], boundary_right[::-1], boundary_left[0]])
+            plt.plot(mpatches.Patch(road))
+
+            connectors = self.lanes.get_lane_connections(id, polygons, 0.5)
+
+            if connectors is not  None:
+                for connector in connectors:
+                    center_line = connector['connection_line']
+                    plt.plot(*center_line.xy, c='r')  
+
         return plt.show()
 
     @staticmethod
@@ -391,8 +434,6 @@ class Lanes:
         gpd.GeoSeries(da).plot(alpha=0.15)
 
         return plt.show()
-
-
 class RoadLine:
     def __init__(self, boundary_id, boundary_type, nodes):
         self.id = boundary_id
@@ -490,6 +531,11 @@ class Lane:
         left_line = self.left_boundary.interpolate(frame='nl')
         right_line = self.right_boundary.interpolate(frame='nl')
         assert len(left_line) == len(right_line), 'Error! The left and right boundaries do not consist of equal points.'
+
+        ref_point = Point(right_line[0])
+
+        if ref_point.distance(Point(left_line[0])) > ref_point.distance(Point(left_line[-1])):
+            left_line = np.flipud(left_line)
         
         lr_line = np.stack([left_line, right_line], axis=-1)
         midpoints = [[(left_coord + right_coord)/2 for left_coord, right_coord in point] for point in lr_line]
@@ -510,9 +556,12 @@ if __name__ == '__main__':
 
     polygons = Polygons().from_df(data)
     lanes = Lanes().from_df(data2)
-    print(lanes[6].successors)
 
-    lanes.get_lane_connections(236, polygons, 0.5)
+    global_pose = 593153.75, 5763042.5
+    map_extent = [-50, 50, -20, 80]
+
+    lanes.visualize_lanes(lanes, polygons, global_pose, map_extent)
+
 
 
         
