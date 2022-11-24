@@ -3,9 +3,9 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
 import pyproj
-import utm
 import math
 
+import utm
 from scipy.interpolate import interp1d
 from shapely.geometry import Polygon, MultiPolygon, LineString, Point, MultiPoint
 from shapely.ops import nearest_points, unary_union
@@ -68,6 +68,9 @@ class Lanes:
         """
         x, y, theta = global_pose[0], global_pose[1], global_pose[2]
 
+        if theta < 0:
+            theta = -theta + np.pi
+
         top_left = [x + map_extent[0], y + map_extent[3]]
         bottom_left = [x + map_extent[0], y + map_extent[2]]
         bottom_right = [x + map_extent[1], y + map_extent[2]]
@@ -76,9 +79,8 @@ class Lanes:
         rectangle = [top_left, top_right, bottom_left, bottom_right]
         rectangle_rotated = [self.rotate_point(global_pose[:2], point, theta) for point in rectangle]
         
-        x_min, y_min = np.min(rectangle_rotated,axis=0)
-        x_max, y_max = np.max(rectangle_rotated,axis=0)
-
+        x_min, y_min = np.min(rectangle_rotated, axis=0)
+        x_max, y_max = np.max(rectangle_rotated, axis=0)
         bounding_box = np.array([[x_min, x_max],[y_min, y_max]])
 
         return bounding_box
@@ -132,7 +134,6 @@ class Lanes:
         """
         Retrieve lane connections between lanes that connect with a specified lane of interest.
         """
-
         # Retrieve successors of a given lane
         successors = self.lanes[lane_id].successors
 
@@ -153,7 +154,7 @@ class Lanes:
 
             for successor in successors:
                 successor = int(successor)
-                ref_point, connection_points_1, connection_points_2 = self.determine_connnection_points(lane_id, ref_lane_start, ref_lane_end, successor)
+                ref_point, connection_points_1, connection_points_2 = self.determine_connnection_points(lane_id, ref_lane_end, successor)
     
                 for element_id in element_ids:
                     # Filter polygons to intersections only
@@ -162,21 +163,22 @@ class Lanes:
                         ref_polygon =  Polygon(polygons[element_id].bounds.nodes_utm)
                         dist = LineString(nearest_points(ref_point, ref_polygon)).length
 
+                        # if lane end is within threshold from an intersection
                         if dist < dist_threshold: 
                                 connection_line = np.concatenate((connection_points_1, connection_points_2), axis=0)
-                            
+
                                 x = np.asarray([i[0] for i in connection_line])
                                 y = np.asarray([i[1] for i in connection_line])
 
                                 xt, yt = self.interpolate_lane_connector(x, y)
 
-                                # Remove points that do not lie within the intersection
+                                # Remove points not located within the refernce intersection
                                 points = list(zip(xt, yt))
                                 pop = []
 
                                 for idx, point in enumerate(points):
                                     point = Point(point)
-                                    # Use distance as contain/within methods have rounding errors
+                                    # Use distance function as contain/within methods have rounding errors
                                     if point.distance(ref_polygon) > 1e-3:
                                         pop.append(idx)
 
@@ -198,35 +200,18 @@ class Lanes:
                                 # plt.plot(polygons[element_id].bounds.nodes_utm[:,0], polygons[element_id].bounds.nodes_utm[:,1])
                                 # plt.show()
 
+                                # exit()
+
                                 lane_connections = {'connector_id': f'{lane_id}_{successor}', 'intersection_id': element_id, 'connection_line': connector_geom}
                                 lane_connectors.append(lane_connections)
 
             return lane_connectors
 
-    def determine_connnection_points(self, lane_id, ref_lane_start, ref_lane_end, successor):
-            suc_lane_start = Point(self.lanes[successor].centerline.nodes_utm[0])
-            suc_lane_end = Point(self.lanes[successor].centerline.nodes_utm[-1])
+    def determine_connnection_points(self, lane_id, ref_lane_end, successor):
+            connection_points_1 = self.lanes[lane_id].centerline.nodes_utm[-3:]
+            connection_points_2 = self.lanes[successor].centerline.nodes_utm[:3]
 
-            points = MultiPoint([suc_lane_start, suc_lane_end])
-            dist1 = LineString(nearest_points(ref_lane_start, points)).length
-            dist2 = LineString(nearest_points(ref_lane_end, points)).length
-
-            if dist1 < dist2:
-                connection_points_1 = np.flip(self.lanes[lane_id].centerline.nodes_utm[:3], 0)
-                ref_point = ref_lane_start
-                connection_points = nearest_points(ref_lane_start, points)
-                if connection_points[1] == points.geoms[0]:
-                    connection_points_2 = self.lanes[successor].centerline.nodes_utm[:3]
-                else:
-                    connection_points_2 = np.flip(self.lanes[successor].centerline.nodes_utm[-3:], 0)
-            else:
-                connection_points_1 = self.lanes[lane_id].centerline.nodes_utm[-3:]
-                ref_point = ref_lane_end
-                connection_points = nearest_points(ref_lane_end, points)
-                if connection_points[1] == points.geoms[0]:
-                    connection_points_2 = self.lanes[successor].centerline.nodes_utm[:3]
-                else:
-                    connection_points_2 = np.flip(self.lanes[successor].centerline.nodes_utm[-3:], 0)
+            ref_point = ref_lane_end
 
             return ref_point, connection_points_1, connection_points_2
 
@@ -242,7 +227,6 @@ class Lanes:
                 for connector in list_connector:
                     id = connector['connector_id']
                     lane = connector['connection_line']
-
                     discretized_lane = self.discretize_lane(id, lane, polyline_resolution, lanebool=False)
                     pose_lists.append(discretized_lane)
                     ids.append(id)
@@ -257,10 +241,8 @@ class Lanes:
         for id in lane_ids:
             lane = self.lanes[id]
             id = str(id)
-
             discretized_lane = self.discretize_lane(id, lane, polyline_resolution, lanebool=True)
             pose_lists.append(discretized_lane)
-
 
         return pose_lists
         
@@ -280,7 +262,6 @@ class Lanes:
         return {id: pose_list}
 
     def discretize(self, line, polyline_resolution):
-        
         path_length = self.get_path_length(line)
 
         discretization = []
@@ -288,9 +269,7 @@ class Lanes:
         n_points = int(max(math.ceil(path_length / polyline_resolution) + 1.5, 2))
         resolution = path_length / (n_points - 1)
 
-        #print(line)
-        start_pose, _ = line.boundary
-        start_pose = (start_pose.x, start_pose.y)
+        start_pose = line.coords[0]
 
         for step in range(n_points):
             step_along_path = step * resolution
@@ -383,57 +362,6 @@ class Lanes:
 
         return left_neighbours, right_neighbours
 
-
-    def calculate_drivable_area(self, polygons):
-        """
-        Gets polygons of lane segments and calculates the drivable area for vehicles.py
-        :input polygons: Polygons of individual lane segments
-        :return: drivable_area: Multipolygon of fused lane segments
-        """
-        drivable_area = MultiPolygon(polygons)
-
-        return drivable_area
-
-    def visualize_lanes(self, lanes, polygons, global_pose, map_extent):
-        """
-        Visualizes lane segments as polygons 
-        :param polygons: list of Polygons of lane segments
-        """
-
-        ids = lanes.get_lanes_in_box(lanes, global_pose, map_extent)
-
-        for id in ids:
-            boundary_left = lanes[id].left_boundary.nodes_utm
-            boundary_right = lanes[id].right_boundary.nodes_utm
-            left_line, right_line, center_line = LineString(lanes[id].left_boundary.nodes_utm), LineString(lanes[id].right_boundary.nodes_utm),  LineString(lanes[id].centerline.nodes_utm)
-
-            # plt.plot(*left_line.xy, c='b')
-            # plt.plot(*right_line.xy, c='b')
-            plt.plot(*center_line.xy, c='r')
-
-
-            road = np.vstack([boundary_left, boundary_right[-1], boundary_right[::-1], boundary_left[0]])
-            plt.plot(mpatches.Patch(road))
-
-            connectors = self.lanes.get_lane_connections(id, polygons, 0.5)
-
-            if connectors is not  None:
-                for connector in connectors:
-                    center_line = connector['connection_line']
-                    plt.plot(*center_line.xy, c='r')  
-
-        return plt.show()
-
-    @staticmethod
-    def visualize_drivable_area(drivable_area):
-        """
-        Visualizes the drivable area for vehicles
-        :param drivable_area: Multipolygon of fused lane segments
-        """
-        da = unary_union(drivable_area)
-        gpd.GeoSeries(da).plot(alpha=0.15)
-
-        return plt.show()
 class RoadLine:
     def __init__(self, boundary_id, boundary_type, nodes):
         self.id = boundary_id
@@ -466,18 +394,13 @@ class RoadLine:
 
     def interpolate(self, frame='utm', n_points=100, kind='linear'): 
         nodes = self._get_nodes_in_frame(frame)
-        #print(self.nodes)
+
         path_t = np.linspace(0, 1, nodes.size//2)
-        
         path_x = nodes[:,0]
         path_y = nodes[:,1]
-        #print(path_x.shape)
-        #print(path_y.shape)
-        r = nodes.T
-        #print(r.shape)
-        #print(path_t.shape)
-        spline = interp1d(path_t, r, kind=kind)
 
+        r = nodes.T
+        spline = interp1d(path_t, r, kind=kind)
         t = np.linspace(np.min(path_t), np.max(path_t), n_points)
         r = spline(t)
 
@@ -545,22 +468,6 @@ class Lane:
         return centerline
 
 
-if __name__ == '__main__':
-    import os
-
-    df = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/polygons_preprocessed.gpkg')
-    data = gpd.GeoDataFrame.explode(df, index_parts=False)
-
-    df2 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/lanes_preprocessed.gpkg')
-    data2 = gpd.GeoDataFrame.explode(df2, index_parts=False)
-
-    polygons = Polygons().from_df(data)
-    lanes = Lanes().from_df(data2)
-
-    global_pose = 593153.75, 5763042.5
-    map_extent = [-50, 50, -20, 80]
-
-    lanes.visualize_lanes(lanes, polygons, global_pose, map_extent)
 
 
 
