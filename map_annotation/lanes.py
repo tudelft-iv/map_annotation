@@ -62,28 +62,34 @@ class Lanes:
     def __getitem__(self, idx):
         return self.lanes[idx]
 
-    def get_frame_location(self, global_pose, map_extent):
+    def get_frame_location(self, target_agent_id, global_pose, map_extent):
         """
         Determine bounding box around a target_agent with the region of interest of a given scene.
         """
         x, y, theta = global_pose[0], global_pose[1], global_pose[2]
 
-        if theta < 0:
-            theta = -theta + np.pi
+        # if theta < 0:
+        #     theta = -theta + np.pi
 
         top_left = [x + map_extent[0], y + map_extent[3]]
         bottom_left = [x + map_extent[0], y + map_extent[2]]
         bottom_right = [x + map_extent[1], y + map_extent[2]]
         top_right = [x + map_extent[1], y + map_extent[3]]
 
-        rectangle = [top_left, top_right, bottom_left, bottom_right]
-        rectangle_rotated = [self.rotate_point(global_pose[:2], point, theta) for point in rectangle]
+        rectangle = [top_left, top_right, bottom_right, bottom_left]
         
+        if target_agent_id != '0':
+            rectangle_rotated = [self.rotate_point(point, global_pose[:2], theta) for point in rectangle]
+        else: 
+            rectangle_rotated = [self.rotate_point(point, global_pose[:2], theta + np.pi/2) for point in rectangle]
+
         x_min, y_min = np.min(rectangle_rotated, axis=0)
         x_max, y_max = np.max(rectangle_rotated, axis=0)
         bounding_box = np.array([[x_min, x_max],[y_min, y_max]])
 
-        return bounding_box
+        box = Polygon(rectangle_rotated)
+
+        return bounding_box, box
 
     def rotate_point(self, point, origin, angle):
 
@@ -96,7 +102,7 @@ class Lanes:
         return qx, qy
 
 
-    def get_lanes_in_box(self, lanes, global_pose, map_extent, frame='utm'):
+    def get_lanes_in_box(self, lanes, target_agent_id, global_pose, map_extent, frame='utm'):
         """
         Select the lanes that are within the specified bounding box.
         """
@@ -104,33 +110,41 @@ class Lanes:
             pass
         lanes = self.lanes
         
-        return self._get_lanes_in_box(lanes, global_pose, map_extent)
+        return self._get_lanes_in_box(lanes, target_agent_id, global_pose, map_extent)
 
-    def _get_lanes_in_box(self, lanes, global_pose, map_extent):
+    def _get_lanes_in_box(self, lanes, target_agent_id, global_pose, map_extent):
         """
         Select the lanes that are within the specified bounding box.
         """
 
-        box = self.get_frame_location(global_pose, map_extent)
+        _, box = self.get_frame_location(target_agent_id, global_pose, map_extent)
 
-        x_min = box[0,0]
-        x_max = box[0,1]
-        y_min = box[1,0]
-        y_max = box[1,1]
+        # x_min = box[0,0]
+        # x_max = box[0,1]
+        # y_min = box[1,0]
+        # y_max = box[1,1]
+
+        
 
         # Checks for lanes that geometrically match the region of the frame of interest
         lanes_in_box = []
-        for lane_id in self.lanes:
+
+        for lane_id in lanes:
             lane = lanes[lane_id]
-            for node in lane.centerline.nodes_utm:
-                if lane_id in lanes_in_box:
-                    pass
-                elif (x_min <= node[0] < x_max) & (y_min <= node[1] < y_max):
-                    lanes_in_box.append(lane_id)
+            line = LineString(lane.centerline.nodes_utm)
+
+            if line.intersects(box):
+                lanes_in_box.append(lane_id)
+
+            # for node in lane.centerline.nodes_utm:
+            #     if lane_id in lanes_in_box:
+            #         pass
+            #     elif (x_min <= node[0] < x_max) & (y_min <= node[1] < y_max):
+            #        lanes_in_box.append(lane_id)
 
         return lanes_in_box
 
-    def get_lane_connections(self, lane_id, polygons, dist_thres):
+    def get_lane_connections(self, lane_id, polygons, global_pose, map_extent, dist_thres):
         """
         Retrieve lane connections between lanes that connect with a specified lane of interest.
         """
@@ -147,7 +161,7 @@ class Lanes:
     
             lane_connectors = []
             dist_threshold = dist_thres
-            element_ids = polygons.element_ids
+            element_ids = polygons.get_polygons_in_box(polygons, global_pose, map_extent, frame='utm')
 
             ref_lane_start = Point(self.lanes[lane_id].centerline.nodes_utm[0])
             ref_lane_end = Point(self.lanes[lane_id].centerline.nodes_utm[-1])
@@ -301,6 +315,13 @@ class Lanes:
         return line.length
 
     def interpolate_lane_connector(self, x, y):
+
+        # Check for duplicate values
+        if len(x) == len(np.unique(x)) and len(y) == len(np.unique(y)):
+            pass
+        else:
+            x = np.unique(x)
+            y = np.unique(y)
 
         points = np.array([x, y]).T
 
