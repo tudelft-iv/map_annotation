@@ -45,14 +45,13 @@ class Polygons:
     def __getitem__(self, idx):
         return self.polygons[idx]
 
-    def get_frame_location(self, target_agent_id, global_pose, map_extent):
+    def get_frame_location(self, target_agent_id, global_pose, map_extent, yaw_angle):
         """
         Determine bounding box around a target_agent with the region of interest of a given scene.
         """
-        x, y, theta = global_pose[0], global_pose[1], global_pose[2]
+        x, y, yaw_agent = global_pose[0], global_pose[1], global_pose[2]
 
-        if theta < 0:
-            theta = -theta + np.pi
+        theta = yaw_angle
 
         top_left = [x + map_extent[0], y + map_extent[3]]
         bottom_left = [x + map_extent[0], y + map_extent[2]]
@@ -60,12 +59,13 @@ class Polygons:
         top_right = [x + map_extent[1], y + map_extent[3]]
 
         rectangle = [top_left, top_right, bottom_right, bottom_left]
-        rectangle_rotated = [self.rotate_point(point, global_pose[:2], theta) for point in rectangle]
         
         if target_agent_id != '0':
-            rectangle_rotated = [self.rotate_point(point, global_pose[:2], theta) for point in rectangle]
+            rectangle_rotated = [self.rotate_point(point, global_pose[:2], -theta) for point in rectangle]
+            rectangle_rotated = [self.rotate_point(point, global_pose[:2], yaw_agent-theta) for point in rectangle_rotated]
+            #rectangle_rotated = [self.rotate_point(point, global_pose[:2], np.pi/2) for point in rectangle_rotated]
         else: 
-            rectangle_rotated = [self.rotate_point(point, global_pose[:2], theta + np.pi/2) for point in rectangle]
+            rectangle_rotated = [self.rotate_point(point, global_pose[:2], -theta) for point in rectangle]
         
         x_min, y_min = np.min(rectangle_rotated,axis=0)
         x_max, y_max = np.max(rectangle_rotated,axis=0)
@@ -86,15 +86,15 @@ class Polygons:
         
         return qx, qy
 
-    def get_polygons_in_box(self, polygons, target_agent_id, global_pose, map_extent, frame='utm'):
+    def get_polygons_in_box(self, polygons, target_agent_id, global_pose, map_extent, yaw_angle, frame='utm'):
         if frame == 'lon-lat':
             pass
 
-        return self._get_polygons_in_box(polygons, target_agent_id, global_pose, map_extent)
+        return self._get_polygons_in_box(polygons, target_agent_id, global_pose, map_extent, yaw_angle)
 
-    def _get_polygons_in_box(self, polygons, target_agent_id, global_pose, map_extent):
+    def _get_polygons_in_box(self, polygons, target_agent_id, global_pose, map_extent, yaw_angle):
 
-        _, box = self.get_frame_location(target_agent_id, global_pose, map_extent)
+        _, box = self.get_frame_location(target_agent_id, global_pose, map_extent, yaw_angle)
 
         # x_min = box[0,0]
         # x_max = box[0,1]
