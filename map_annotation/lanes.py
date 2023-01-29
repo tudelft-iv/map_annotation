@@ -2,6 +2,7 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
+from numpy.linalg import norm
 import pyproj
 import math
 
@@ -478,10 +479,14 @@ class Lane:
         assert len(left_line) == len(right_line), 'Error! The left and right boundaries do not consist of equal points.'
 
         ref_point = Point(right_line[0])
+        # ref_point2 = Point(right_line[-1])
 
         if ref_point.distance(Point(left_line[0])) > ref_point.distance(Point(left_line[-1])):
             left_line = np.flipud(left_line)
-        
+
+        # if check_lane_direction(left_lane=left_line, right_lane=right_line, yaw_diff_threshold=np.pi/2):
+        #     left_line = np.flipud(left_line)
+
         lr_line = np.stack([left_line, right_line], axis=-1)
         midpoints = [[(left_coord + right_coord)/2 for left_coord, right_coord in point] for point in lr_line]
 
@@ -489,8 +494,61 @@ class Lane:
 
         return centerline
 
+def check_lane_direction(left_lane, right_lane, yaw_diff_threshold):
+    
+    # Implement yaw threshold check
+    # yaw_rb = 0
+    # yaw_lb = 0
+
+    # for i in range(len(right_lane) - 1):
+    #     yaw_rb += np.arctan2((right_lane[i + 1, 0] - right_lane[i, 0]), (right_lane[i + 1, 1] - right_lane[i, 1]))
+
+    # for i in range(len(left_lane) - 1):
+    #     yaw_lb += np.arctan2((left_lane[i + 1, 0] - left_lane[i, 0]), (left_lane[i + 1, 1] - left_lane[i, 1]))
+
+    # avg_yaw_rb = yaw_rb / (len(right_lane) - 1)
+    # avg_yaw_lb = yaw_lb / (len(left_lane) - 1) 
+
+    # yaw_diff = np.abs(avg_yaw_lb - avg_yaw_rb)
+
+    # if yaw_diff > yaw_diff_threshold:
+    #     return True
+    # else:
+    #     return False
+    
+    start_left, end_left = np.array(left_lane[0]), np.array(left_lane[-1])
+    start_right, end_right = np.array(right_lane[0]), np.array(right_lane[-1])
+
+    left_lane_vector = end_left - start_left
+    right_lane_vector = end_right - start_right
+
+    # lane_check = False
+
+    # if np.sign(left_lane_vector[0]) != np.sign(right_lane_vector[0]) or np.sign(left_lane_vector[1]) != np.sign(right_lane_vector[1]):
+    #     lane_check = True
 
 
+    cos_sim = (left_lane_vector @ right_lane_vector.T) / (norm(left_lane_vector) * norm(right_lane_vector)) 
+
+    # Implement yaw threshold check
+    # yaw_rb = 0
+    # yaw_lb = 0
+
+    # for i in range(len(right_lane) - 1):
+    #     yaw_rb += np.arctan2((right_lane[i + 1, 0] - right_lane[i, 0]), (right_lane[i + 1, 1] - right_lane[i, 1]))
+
+    # for i in range(len(left_lane) - 1):
+    #     yaw_lb += np.arctan2((left_lane[i + 1, 0] - left_lane[i, 0]), (left_lane[i + 1, 1] - left_lane[i, 1]))
+
+    # avg_yaw_rb = yaw_rb / (len(right_lane) - 1)
+    # avg_yaw_lb = yaw_lb / (len(left_lane) - 1) 
+
+    # yaw_diff = np.abs(avg_yaw_lb - avg_yaw_rb)
+
+    if cos_sim < 0:
+        return True
+
+    return False
 
 
         
