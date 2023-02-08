@@ -11,9 +11,10 @@ from scipy.interpolate import interp1d
 from shapely.geometry import Polygon, MultiPolygon, LineString, Point, MultiPoint
 from shapely.ops import nearest_points, unary_union
 
-from polygons import Polygons
-from utils import non_decreasing, non_increasing, monotonic
-from transforms import CoordTransformer
+from .polygons import Polygons
+from .utils import non_decreasing, non_increasing, monotonic
+from pdok_wms_request.transforms import CoordTransformer
+
 
 class Lanes:
     """
@@ -22,7 +23,7 @@ class Lanes:
 
     def __init__(self):
         """
-        Initialize lane geometry 
+        Initialize lane geometry
         """
         self.lanes = None
 
@@ -34,30 +35,41 @@ class Lanes:
         Retrieve lane information from labelled data.
         """
         self.lanes = {}
-        self.lane_ids = list(set(df['lane_id'].astype('int64').values))
+        self.lane_ids = list(set(df["lane_id"].astype("int64").values))
 
         # Retrieve lane data
         for lane_id in self.lane_ids:
-            lane_data = df[df['lane_id'] == lane_id]
-            left_bound_data = lane_data[lane_data['boundary_left']].squeeze().to_dict()
-            right_bound_data = lane_data[lane_data['boundary_right']].squeeze().to_dict()
+            lane_data = df[df["lane_id"] == lane_id]
+            left_bound_data = lane_data[lane_data["boundary_left"]].squeeze().to_dict()
+            right_bound_data = (
+                lane_data[lane_data["boundary_right"]].squeeze().to_dict()
+            )
 
             left_boundary = RoadLine(
-                    left_bound_data['lane_id'],
-                    left_bound_data['road_type'],
-                    np.array(left_bound_data['geometry'].coords)[:,:2])
+                left_bound_data["lane_id"],
+                left_bound_data["road_type"],
+                np.array(left_bound_data["geometry"].coords)[:, :2],
+            )
             right_boundary = RoadLine(
-                    right_bound_data['lane_id'],
-                    right_bound_data['road_type'],
-                    np.array(right_bound_data['geometry'].coords)[:,:2])
-            
-            predecessors = right_bound_data['predecessors'] 
-            successors = right_bound_data['successors'] 
-            allowed_agents = right_bound_data['allowed_agents'] 
-            
-            self.lane = Lane(lane_id, left_boundary, right_boundary, predecessors, successors, allowed_agents)
+                right_bound_data["lane_id"],
+                right_bound_data["road_type"],
+                np.array(right_bound_data["geometry"].coords)[:, :2],
+            )
+
+            predecessors = right_bound_data["predecessors"]
+            successors = right_bound_data["successors"]
+            allowed_agents = right_bound_data["allowed_agents"]
+
+            self.lane = Lane(
+                lane_id,
+                left_boundary,
+                right_boundary,
+                predecessors,
+                successors,
+                allowed_agents,
+            )
             self.lanes[lane_id] = self.lane
-            
+
         return self
 
     def __getitem__(self, idx):
@@ -70,7 +82,7 @@ class Lanes:
         x, y, yaw_agent = global_pose[0], global_pose[1], global_pose[2]
 
         theta = yaw_angle
-        #angle = yaw_agent - theta
+        # angle = yaw_agent - theta
 
         top_left = [x + map_extent[0], y + map_extent[3]]
         bottom_left = [x + map_extent[0], y + map_extent[2]]
@@ -78,16 +90,23 @@ class Lanes:
         top_right = [x + map_extent[1], y + map_extent[3]]
 
         rectangle = [top_left, top_right, bottom_right, bottom_left]
-        
-        if target_agent_id != '0':
-            rectangle_rotated = [self.rotate_point(point, global_pose[:2], -theta) for point in rectangle]
-            rectangle_rotated = [self.rotate_point(point, global_pose[:2], yaw_agent-theta) for point in rectangle_rotated]
-        else: 
-            rectangle_rotated = [self.rotate_point(point, global_pose[:2], -theta) for point in rectangle]
+
+        if target_agent_id != "0":
+            rectangle_rotated = [
+                self.rotate_point(point, global_pose[:2], -theta) for point in rectangle
+            ]
+            rectangle_rotated = [
+                self.rotate_point(point, global_pose[:2], yaw_agent - theta)
+                for point in rectangle_rotated
+            ]
+        else:
+            rectangle_rotated = [
+                self.rotate_point(point, global_pose[:2], -theta) for point in rectangle
+            ]
 
         x_min, y_min = np.min(rectangle_rotated, axis=0)
         x_max, y_max = np.max(rectangle_rotated, axis=0)
-        bounding_box = np.array([[x_min, x_max],[y_min, y_max]])
+        bounding_box = np.array([[x_min, x_max], [y_min, y_max]])
 
         box = Polygon(rectangle_rotated)
 
@@ -100,33 +119,38 @@ class Lanes:
 
         qx = ox + math.cos(angle) * (px - ox) - math.sin(angle) * (py - oy)
         qy = oy + math.sin(angle) * (px - ox) + math.cos(angle) * (py - oy)
-        
+
         return qx, qy
 
-
-    def get_lanes_in_box(self, lanes, target_agent_id, global_pose, map_extent, yaw_angle, frame='utm'):
+    def get_lanes_in_box(
+        self, lanes, target_agent_id, global_pose, map_extent, yaw_angle, frame="utm"
+    ):
         """
         Select the lanes that are within the specified bounding box.
         """
-        if frame == 'lon-lat':
+        if frame == "lon-lat":
             pass
         lanes = self.lanes
-        
-        return self._get_lanes_in_box(lanes, target_agent_id, global_pose, map_extent, yaw_angle)
 
-    def _get_lanes_in_box(self, lanes, target_agent_id, global_pose, map_extent, yaw_angle):
+        return self._get_lanes_in_box(
+            lanes, target_agent_id, global_pose, map_extent, yaw_angle
+        )
+
+    def _get_lanes_in_box(
+        self, lanes, target_agent_id, global_pose, map_extent, yaw_angle
+    ):
         """
         Select the lanes that are within the specified bounding box.
         """
 
-        _, box = self.get_frame_location(target_agent_id, global_pose, map_extent, yaw_angle)
+        _, box = self.get_frame_location(
+            target_agent_id, global_pose, map_extent, yaw_angle
+        )
 
         # x_min = box[0,0]
         # x_max = box[0,1]
         # y_min = box[1,0]
         # y_max = box[1,1]
-
-        
 
         # Checks for lanes that geometrically match the region of the frame of interest
         lanes_in_box = []
@@ -146,7 +170,9 @@ class Lanes:
 
         return lanes_in_box
 
-    def get_lane_connections(self, lane_id, polygons, global_pose, map_extent, dist_thres):
+    def get_lane_connections(
+        self, lane_id, polygons, global_pose, map_extent, dist_thres
+    ):
         """
         Retrieve lane connections between lanes that connect with a specified lane of interest.
         """
@@ -159,96 +185,109 @@ class Lanes:
         elif successors is None:
             pass
         else:
-            successors = successors.split(',')
-    
+            successors = successors.split(",")
+
             lane_connectors = []
             dist_threshold = dist_thres
-            element_ids = polygons.get_polygons_in_box(polygons, global_pose, map_extent, frame='utm')
+            element_ids = polygons.get_polygons_in_box(
+                polygons, global_pose, map_extent, frame="utm"
+            )
 
             ref_lane_start = Point(self.lanes[lane_id].centerline.nodes_utm[0])
             ref_lane_end = Point(self.lanes[lane_id].centerline.nodes_utm[-1])
 
             for successor in successors:
                 successor = int(successor)
-                ref_point, connection_points_1, connection_points_2 = self.determine_connnection_points(lane_id, ref_lane_end, successor)
-    
+                (
+                    ref_point,
+                    connection_points_1,
+                    connection_points_2,
+                ) = self.determine_connnection_points(lane_id, ref_lane_end, successor)
+
                 for element_id in element_ids:
                     # Filter polygons to intersections only
-                     if polygons[element_id].type.tolist()[0] == 'intersection':
+                    if polygons[element_id].type.tolist()[0] == "intersection":
                         # Determines whether intersection geomatches final lane node
-                        ref_polygon =  Polygon(polygons[element_id].bounds.nodes_utm)
+                        ref_polygon = Polygon(polygons[element_id].bounds.nodes_utm)
                         dist = LineString(nearest_points(ref_point, ref_polygon)).length
 
                         # if lane end is within threshold from an intersection
-                        if dist < dist_threshold: 
-                                connection_line = np.concatenate((connection_points_1, connection_points_2), axis=0)
+                        if dist < dist_threshold:
+                            connection_line = np.concatenate(
+                                (connection_points_1, connection_points_2), axis=0
+                            )
 
-                                x = np.asarray([i[0] for i in connection_line])
-                                y = np.asarray([i[1] for i in connection_line])
+                            x = np.asarray([i[0] for i in connection_line])
+                            y = np.asarray([i[1] for i in connection_line])
 
-                                xt, yt = self.interpolate_lane_connector(x, y)
+                            xt, yt = self.interpolate_lane_connector(x, y)
 
-                                # Remove points not located within the refernce intersection
-                                points = list(zip(xt, yt))
-                                pop = []
+                            # Remove points not located within the refernce intersection
+                            points = list(zip(xt, yt))
+                            pop = []
 
-                                for idx, point in enumerate(points):
-                                    point = Point(point)
-                                    # Use distance function as contain/within methods have rounding errors
-                                    if point.distance(ref_polygon) > 1e-3:
-                                        pop.append(idx)
+                            for idx, point in enumerate(points):
+                                point = Point(point)
+                                # Use distance function as contain/within methods have rounding errors
+                                if point.distance(ref_polygon) > 1e-3:
+                                    pop.append(idx)
 
-                                pop.reverse()
+                            pop.reverse()
 
-                                for to_pop in pop:
-                                    points.pop(to_pop)
+                            for to_pop in pop:
+                                points.pop(to_pop)
 
-                                connector_geom = LineString(points)
+                            connector_geom = LineString(points)
 
-                                # x_val = [i[0] for i in points]
-                                # y_val = [i[1] for i in points]
-                        
-                                # plt.scatter(x_val, y_val, color='g')
-                                # plt.plot(x_val, y_val, color='g')
-                                # plt.scatter(xt, yt, alpha=0.2)
-                                # plt.scatter(connection_points_1[:,0], connection_points_1[:,1], color='r')
-                                # plt.scatter(connection_points_2[:,0], connection_points_2[:,1], color='r')
-                                # plt.plot(polygons[element_id].bounds.nodes_utm[:,0], polygons[element_id].bounds.nodes_utm[:,1])
-                                # plt.show()
+                            # x_val = [i[0] for i in points]
+                            # y_val = [i[1] for i in points]
 
-                                # exit()
+                            # plt.scatter(x_val, y_val, color='g')
+                            # plt.plot(x_val, y_val, color='g')
+                            # plt.scatter(xt, yt, alpha=0.2)
+                            # plt.scatter(connection_points_1[:,0], connection_points_1[:,1], color='r')
+                            # plt.scatter(connection_points_2[:,0], connection_points_2[:,1], color='r')
+                            # plt.plot(polygons[element_id].bounds.nodes_utm[:,0], polygons[element_id].bounds.nodes_utm[:,1])
+                            # plt.show()
 
-                                lane_connections = {'connector_id': f'{lane_id}_{successor}', 'intersection_id': element_id, 'connection_line': connector_geom}
-                                lane_connectors.append(lane_connections)
+                            # exit()
+
+                            lane_connections = {
+                                "connector_id": f"{lane_id}_{successor}",
+                                "intersection_id": element_id,
+                                "connection_line": connector_geom,
+                            }
+                            lane_connectors.append(lane_connections)
 
             return lane_connectors
 
     def determine_connnection_points(self, lane_id, ref_lane_end, successor):
-            connection_points_1 = self.lanes[lane_id].centerline.nodes_utm[-3:]
-            connection_points_2 = self.lanes[successor].centerline.nodes_utm[:3]
+        connection_points_1 = self.lanes[lane_id].centerline.nodes_utm[-3:]
+        connection_points_2 = self.lanes[successor].centerline.nodes_utm[:3]
 
-            ref_point = ref_lane_end
+        ref_point = ref_lane_end
 
-            return ref_point, connection_points_1, connection_points_2
+        return ref_point, connection_points_1, connection_points_2
 
     def discretize_connectors(self, lane_connectors, polyline_resolution):
         pose_lists = []
         ids = []
 
-        #print(lane_connectors)
+        # print(lane_connectors)
         for list_connector in lane_connectors:
             if list_connector is None:
                 pass
             else:
                 for connector in list_connector:
-                    id = connector['connector_id']
-                    lane = connector['connection_line']
-                    discretized_lane = self.discretize_lane(id, lane, polyline_resolution, lanebool=False)
+                    id = connector["connector_id"]
+                    lane = connector["connection_line"]
+                    discretized_lane = self.discretize_lane(
+                        id, lane, polyline_resolution, lanebool=False
+                    )
                     pose_lists.append(discretized_lane)
                     ids.append(id)
 
         return pose_lists
-
 
     def discretize_lanes(self, lane_ids, polyline_resolution):
 
@@ -257,11 +296,13 @@ class Lanes:
         for id in lane_ids:
             lane = self.lanes[id]
             id = str(id)
-            discretized_lane = self.discretize_lane(id, lane, polyline_resolution, lanebool=True)
+            discretized_lane = self.discretize_lane(
+                id, lane, polyline_resolution, lanebool=True
+            )
             pose_lists.append(discretized_lane)
 
         return pose_lists
-        
+
     def discretize_lane(self, id, lane, polyline_resolution, lanebool):
         pose_list = []
 
@@ -271,9 +312,9 @@ class Lanes:
             line = lane
 
         poses = self.discretize(line, polyline_resolution)
-        
+
         for pose in poses:
-            pose_list.append(pose)        
+            pose_list.append(pose)
 
         return {id: pose_list}
 
@@ -293,7 +334,9 @@ class Lanes:
             new_point = line.interpolate(step_along_path)
 
             if len(discretization) != 0:
-                theta = np.arctan2((new_point.y - start_pose[1]), (new_point.x - start_pose[0]))
+                theta = np.arctan2(
+                    (new_point.y - start_pose[1]), (new_point.x - start_pose[0])
+                )
             else:
                 theta = 0
 
@@ -328,19 +371,19 @@ class Lanes:
         points = np.array([x, y]).T
 
         # Linear length along the line:
-        distance = np.cumsum(np.sqrt(np.sum( np.diff(points, axis=0)**2, axis=1 )))
-        distance = np.insert(distance, 0, 0)/distance[-1]
+        distance = np.cumsum(np.sqrt(np.sum(np.diff(points, axis=0) ** 2, axis=1)))
+        distance = np.insert(distance, 0, 0) / distance[-1]
 
         n = np.linspace(0, 1, 75)
 
-        interpolator =  interp1d(distance, points, kind='quadratic', axis=0)
+        interpolator = interp1d(distance, points, kind="quadratic", axis=0)
         connector_nodes = interpolator(n)
 
         out_x = connector_nodes.T[0]
         out_y = connector_nodes.T[1]
 
         return out_x, out_y
-    
+
     def get_neighbouring_lanes(self, lane_id, d_threshold) -> list:
         """
         Get all neighbouring lane segments of a given lane segment
@@ -350,40 +393,65 @@ class Lanes:
         """
 
         # TODO clean function, add functionality of boundary type
-        left_line, right_line = self.lanes[lane_id].left_boundary, self.lanes[lane_id].right_boundary
+        left_line, right_line = (
+            self.lanes[lane_id].left_boundary,
+            self.lanes[lane_id].right_boundary,
+        )
 
         left_line = LineString(left_line.nodes_utm)
         right_line = LineString(right_line.nodes_utm)
-        
+
         potential_neighbours = []
         left_neighbours = []
         right_neighbours = []
 
-        for i in range(1,len(self.lanes)): 
-            if self.lanes[lane_id].left_boundary.type == 2 or self.lanes[lane_id].right_boundary.type == 2:
-                if self.lanes[i].left_boundary.type == 2 or self.lanes[i].right_boundary.type == 2:
-                    if (self.lanes[i].id != lane_id) and (self.lanes[i].id not in potential_neighbours):
+        for i in range(1, len(self.lanes)):
+            if (
+                self.lanes[lane_id].left_boundary.type == 2
+                or self.lanes[lane_id].right_boundary.type == 2
+            ):
+                if (
+                    self.lanes[i].left_boundary.type == 2
+                    or self.lanes[i].right_boundary.type == 2
+                ):
+                    if (self.lanes[i].id != lane_id) and (
+                        self.lanes[i].id not in potential_neighbours
+                    ):
                         potential_neighbours.append(self.lanes[i].id)
-            
+
         for neighbour in potential_neighbours:
-            left_line_other, right_line_other = self.lanes[neighbour].left_boundary, self.lanes[neighbour].right_boundary
+            left_line_other, right_line_other = (
+                self.lanes[neighbour].left_boundary,
+                self.lanes[neighbour].right_boundary,
+            )
 
             left_line_other = LineString(left_line_other.nodes_utm)
             right_line_other = LineString(right_line_other.nodes_utm)
 
-            if self.lanes[lane_id].left_boundary.type == 2 and self.lanes[neighbour].right_boundary.type == 2:
-                distance1 = LineString(nearest_points(left_line, right_line_other)).length
+            if (
+                self.lanes[lane_id].left_boundary.type == 2
+                and self.lanes[neighbour].right_boundary.type == 2
+            ):
+                distance1 = LineString(
+                    nearest_points(left_line, right_line_other)
+                ).length
 
                 if distance1 <= d_threshold:
                     left_neighbours.append(neighbour)
 
-            if self.lanes[lane_id].right_boundary.type == 2 and self.lanes[neighbour].left_boundary.type == 2:
-                distance2 = LineString(nearest_points(right_line, left_line_other)).length
+            if (
+                self.lanes[lane_id].right_boundary.type == 2
+                and self.lanes[neighbour].left_boundary.type == 2
+            ):
+                distance2 = LineString(
+                    nearest_points(right_line, left_line_other)
+                ).length
 
                 if distance2 <= d_threshold:
-                    right_neighbours.append(neighbour)  
+                    right_neighbours.append(neighbour)
 
         return left_neighbours, right_neighbours
+
 
 class RoadLine:
     def __init__(self, boundary_id, boundary_type, nodes):
@@ -402,58 +470,61 @@ class RoadLine:
     @property
     def nodes_lonlat(self):
         trans = CoordTransformer()
-        nodes_global = list(trans.t_global_nl(self.nodes[:,0], self.nodes[:,1]))
+        nodes_global = list(trans.t_global_nl(self.nodes[:, 0], self.nodes[:, 1]))
         return nodes_global
 
     def _get_nodes_in_frame(self, frame):
-        if frame == 'nl':
+        if frame == "nl":
             return self.nodes
-        elif frame == 'lonlat':
+        elif frame == "lonlat":
             return self.nodes_lonlat
-        elif frame == 'utm':
+        elif frame == "utm":
             return self.nodes_utm
         else:
             raise ValueError(f'Frame "{frame}" not valid.')
 
-    def interpolate(self, frame='utm', n_points=100, kind='linear'): 
+    def interpolate(self, frame="utm", n_points=100, kind="linear"):
         nodes = self._get_nodes_in_frame(frame)
 
-        path_t = np.linspace(0, 1, nodes.size//2)
-        path_x = nodes[:,0]
-        path_y = nodes[:,1]
+        path_t = np.linspace(0, 1, nodes.size // 2)
+        path_x = nodes[:, 0]
+        path_y = nodes[:, 1]
 
         r = nodes.T
         spline = interp1d(path_t, r, kind=kind)
         t = np.linspace(np.min(path_t), np.max(path_t), n_points)
         r = spline(t)
 
-        return r.T 
+        return r.T
+
 
 class Lane:
-    def __init__(self,
-            lane_id,
-            left_boundary,
-            right_boundary,
-            predecessors,
-            successors,
-            allowed_agents,
-            lane_type=None):
-        self.id = lane_id 
+    def __init__(
+        self,
+        lane_id,
+        left_boundary,
+        right_boundary,
+        predecessors,
+        successors,
+        allowed_agents,
+        lane_type=None,
+    ):
+        self.id = lane_id
         self.predecessors = predecessors
         self.successors = successors
         self.allowed_agents = allowed_agents
         self.type = lane_type
-        
+
         self._left_boundary = left_boundary
         self._right_boundary = right_boundary
-        self._centerline = None 
+        self._centerline = None
 
     @property
     def left_boundary(self):
         return self._left_boundary
 
     @left_boundary.setter
-    def left_boundary(self, data): 
+    def left_boundary(self, data):
         self._left_boundary = data
         self._centerline = None
 
@@ -462,7 +533,7 @@ class Lane:
         return self._right_boundary
 
     @right_boundary.setter
-    def right_boundary(self, data): 
+    def right_boundary(self, data):
         self._right_boundary = data
         self._centerline = None
 
@@ -474,28 +545,36 @@ class Lane:
         return self._centerline
 
     def _calculate_centerline(self):
-        left_line = self.left_boundary.interpolate(frame='nl')
-        right_line = self.right_boundary.interpolate(frame='nl')
-        assert len(left_line) == len(right_line), 'Error! The left and right boundaries do not consist of equal points.'
+        left_line = self.left_boundary.interpolate(frame="nl")
+        right_line = self.right_boundary.interpolate(frame="nl")
+        assert len(left_line) == len(
+            right_line
+        ), "Error! The left and right boundaries do not consist of equal points."
 
         ref_point = Point(right_line[0])
         # ref_point2 = Point(right_line[-1])
 
-        if ref_point.distance(Point(left_line[0])) > ref_point.distance(Point(left_line[-1])):
+        if ref_point.distance(Point(left_line[0])) > ref_point.distance(
+            Point(left_line[-1])
+        ):
             left_line = np.flipud(left_line)
 
         # if check_lane_direction(left_lane=left_line, right_lane=right_line, yaw_diff_threshold=np.pi/2):
         #     left_line = np.flipud(left_line)
 
         lr_line = np.stack([left_line, right_line], axis=-1)
-        midpoints = [[(left_coord + right_coord)/2 for left_coord, right_coord in point] for point in lr_line]
+        midpoints = [
+            [(left_coord + right_coord) / 2 for left_coord, right_coord in point]
+            for point in lr_line
+        ]
 
-        centerline = RoadLine(None, 'lane_centerline', np.array(midpoints))
+        centerline = RoadLine(None, "lane_centerline", np.array(midpoints))
 
         return centerline
 
+
 def check_lane_direction(left_lane, right_lane, yaw_diff_threshold):
-    
+
     # Implement yaw threshold check
     # yaw_rb = 0
     # yaw_lb = 0
@@ -507,7 +586,7 @@ def check_lane_direction(left_lane, right_lane, yaw_diff_threshold):
     #     yaw_lb += np.arctan2((left_lane[i + 1, 0] - left_lane[i, 0]), (left_lane[i + 1, 1] - left_lane[i, 1]))
 
     # avg_yaw_rb = yaw_rb / (len(right_lane) - 1)
-    # avg_yaw_lb = yaw_lb / (len(left_lane) - 1) 
+    # avg_yaw_lb = yaw_lb / (len(left_lane) - 1)
 
     # yaw_diff = np.abs(avg_yaw_lb - avg_yaw_rb)
 
@@ -515,7 +594,7 @@ def check_lane_direction(left_lane, right_lane, yaw_diff_threshold):
     #     return True
     # else:
     #     return False
-    
+
     start_left, end_left = np.array(left_lane[0]), np.array(left_lane[-1])
     start_right, end_right = np.array(right_lane[0]), np.array(right_lane[-1])
 
@@ -527,8 +606,9 @@ def check_lane_direction(left_lane, right_lane, yaw_diff_threshold):
     # if np.sign(left_lane_vector[0]) != np.sign(right_lane_vector[0]) or np.sign(left_lane_vector[1]) != np.sign(right_lane_vector[1]):
     #     lane_check = True
 
-
-    cos_sim = (left_lane_vector @ right_lane_vector.T) / (norm(left_lane_vector) * norm(right_lane_vector)) 
+    cos_sim = (left_lane_vector @ right_lane_vector.T) / (
+        norm(left_lane_vector) * norm(right_lane_vector)
+    )
 
     # Implement yaw threshold check
     # yaw_rb = 0
@@ -541,7 +621,7 @@ def check_lane_direction(left_lane, right_lane, yaw_diff_threshold):
     #     yaw_lb += np.arctan2((left_lane[i + 1, 0] - left_lane[i, 0]), (left_lane[i + 1, 1] - left_lane[i, 1]))
 
     # avg_yaw_rb = yaw_rb / (len(right_lane) - 1)
-    # avg_yaw_lb = yaw_lb / (len(left_lane) - 1) 
+    # avg_yaw_lb = yaw_lb / (len(left_lane) - 1)
 
     # yaw_diff = np.abs(avg_yaw_lb - avg_yaw_rb)
 
@@ -549,6 +629,3 @@ def check_lane_direction(left_lane, right_lane, yaw_diff_threshold):
         return True
 
     return False
-
-
-        
