@@ -13,7 +13,7 @@ from shapely.ops import nearest_points, unary_union
 
 from .polygons import Polygons
 from .utils import non_decreasing, non_increasing, monotonic
-from pdok_wms_request.transforms import CoordTransformer
+from map_annotation.transforms import CoordTransformer
 
 
 class Lanes:

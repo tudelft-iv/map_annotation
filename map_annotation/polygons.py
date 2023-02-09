@@ -1,15 +1,13 @@
+# from fiona import bounds
 import pyproj
 import utm
-import math
 
 import numpy as np
 import geopandas as gpd
+from map_annotation.transforms import CoordTransformer
 
-import matplotlib.pyplot as plt
-
-from transforms import CoordTransformer
-from shapely.geometry import Polygon, MultiPolygon, LineString, Point, MultiPoint
-import shapely.geometry as shapely
+from shapely.geometry import Polygon
+import shapely
 
 
 class Polygons:
@@ -35,11 +33,8 @@ class Polygons:
             road_type = geometry_data["road_type"]
             allowed_agents = geometry_data["allowed_agents"]
             geometry = geometry_data["geometry"]
-            type = geometry_data["type"]
 
-            self.polygon = Polygon(
-                element_id, road_type, allowed_agents, geometry, type
-            )
+            self.polygon = Polygon(element_id, road_type, allowed_agents, geometry)
             self.polygons[element_id] = self.polygon
 
         return self
@@ -47,93 +42,39 @@ class Polygons:
     def __getitem__(self, idx):
         return self.polygons[idx]
 
-    def get_frame_location(self, target_agent_id, global_pose, map_extent, yaw_angle):
-        """
-        Determine bounding box around a target_agent with the region of interest of a given scene.
-        """
-        x, y, yaw_agent = global_pose[0], global_pose[1], global_pose[2]
-
-        theta = yaw_angle
-
-        top_left = [x + map_extent[0], y + map_extent[3]]
-        bottom_left = [x + map_extent[0], y + map_extent[2]]
-        bottom_right = [x + map_extent[1], y + map_extent[2]]
-        top_right = [x + map_extent[1], y + map_extent[3]]
-
-        rectangle = [top_left, top_right, bottom_right, bottom_left]
-
-        if target_agent_id != "0":
-            rectangle_rotated = [
-                self.rotate_point(point, global_pose[:2], -theta) for point in rectangle
-            ]
-            rectangle_rotated = [
-                self.rotate_point(point, global_pose[:2], yaw_agent - theta)
-                for point in rectangle_rotated
-            ]
-            # rectangle_rotated = [self.rotate_point(point, global_pose[:2], np.pi/2) for point in rectangle_rotated]
-        else:
-            rectangle_rotated = [
-                self.rotate_point(point, global_pose[:2], -theta) for point in rectangle
-            ]
-
-        x_min, y_min = np.min(rectangle_rotated, axis=0)
-        x_max, y_max = np.max(rectangle_rotated, axis=0)
-
-        bounding_box = np.array([[x_min, x_max], [y_min, y_max]])
-
-        box = shapely.Polygon(rectangle_rotated)
-
-        return bounding_box, box
-
-    def rotate_point(self, point, origin, angle):
-
-        ox, oy = origin
-        px, py = point
-
-        qx = ox + math.cos(angle) * (px - ox) - math.sin(angle) * (py - oy)
-        qy = oy + math.sin(angle) * (px - ox) + math.cos(angle) * (py - oy)
-
-        return qx, qy
-
-    def get_polygons_in_box(
-        self, polygons, target_agent_id, global_pose, map_extent, yaw_angle, frame="utm"
-    ):
+    def get_polygons_in_box(self, global_pose, map_extent, frame="utm"):
         if frame == "lon-lat":
             pass
+        polygons = self.polygons
 
-        return self._get_polygons_in_box(
-            polygons, target_agent_id, global_pose, map_extent, yaw_angle
+        self._get_polygons_in_box(polygons, global_pose, map_extent)
+
+    def _get_polygons_in_box(self, polygons, global_pose, map_extent):
+
+        box = np.array(
+            [
+                [global_pose[0] - map_extent, global_pose[0] + map_extent],
+                [global_pose[1] - map_extent, global_pose[1] + map_extent],
+            ]
         )
 
-    def _get_polygons_in_box(
-        self, polygons, target_agent_id, global_pose, map_extent, yaw_angle
-    ):
-        _, box = self.get_frame_location(
-            target_agent_id, global_pose, map_extent, yaw_angle
-        )
-
-        # x_min = box[0,0]
-        # x_max = box[0,1]
-        # y_min = box[1,0]
-        # y_max = box[1,1]
+        x_min = box[0, 0]
+        x_max = box[0, 1]
+        y_min = box[1, 0]
+        y_max = box[1, 1]
 
         polygons_in_box = []
-        for id in polygons.element_ids:
-            polygon = polygons[id]
-            polygon = shapely.Polygon(polygon.bounds.nodes_utm)
-            if polygon.intersects(box):
-                polygons_in_box.append(id)
+        for element_id in polygons:
+            polygon = polygons[element_id]
+            for node in polygon.nodes:
+                if element_id in polygons_in_box:
+                    continue
+                if (x_min <= node[0] < x_max) & (y_min <= node[1] < y_max):
+                    polygons_in_box.append(element_id)
 
-            # for node in polygon.bounds.nodes_utm:
-            #     if id in polygons_in_box:
-            #         continue
-            #     if (x_min <= node[0] < x_max) & (y_min <= node[1] < y_max):
-            #         polygons_in_box.append(id)
+        polygons = [self.polygons[polygon] for polygon in polygons_in_box]
 
-        # for element_id in polygons_in_box:
-        #     plt.plot(polygons[element_id].bounds.nodes_utm[:,0], polygons[element_id].bounds.nodes_utm[:,1])
-
-        return polygons_in_box
+        return polygons
 
 
 class Bounds:
@@ -190,12 +131,11 @@ class Bounds:
 
 
 class Polygon:
-    def __init__(self, element_id, road_type, allowed_agents, geometry, type):
+    def __init__(self, element_id, road_type, allowed_agents, geometry):
         self.id = element_id
         self.type = road_type
         self.allowed_agents = allowed_agents
         self.geometry = geometry
-        self.type = type
         self._bounds = None
 
     @property
@@ -214,26 +154,3 @@ class Polygon:
 
         return bounds
 
-
-if __name__ == "__main__":
-    import os
-    import matplotlib.pyplot as plt
-
-    # data['type'] = 'intersection'
-    # data2['type'] = 'crosswalk'
-    # #print(data)
-
-    # polygons = data.append(data2)
-
-    # polygons.to_file('polygons.gpkg', driver='GPKG', layer='polygons')
-
-    # intersections = Polygons().from_df(data)
-    # crosswalks = Polygons().from_df(data2)
-
-    # print(intersections.element_ids)
-    # print(crosswalks.element_ids)
-
-    # print(polygons.element_ids)
-    # Global coordinates of the prius at frame location within lanes file
-    global_pose = 593201.79861197, 5763099.17704595
-    # print(nodes)

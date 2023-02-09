@@ -10,9 +10,9 @@ from scipy.interpolate import interp1d
 from shapely.geometry import Polygon, MultiPolygon, LineString, Point, MultiPoint
 from shapely.ops import nearest_points, unary_union
 
-from polygons import Polygons
-from lanes import Lanes
-from transforms import CoordTransformer
+from .polygons import Polygons
+from .lanes import Lanes
+from map_annotation.transforms import CoordTransformer
 
 class LaneConnectors:
     """
