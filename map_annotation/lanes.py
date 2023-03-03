@@ -11,8 +11,8 @@ from scipy.interpolate import interp1d
 from shapely.geometry import Polygon, MultiPolygon, LineString, Point, MultiPoint
 from shapely.ops import nearest_points, unary_union
 
-from .polygons import Polygons
-from .utils import non_decreasing, non_increasing, monotonic
+from map_annotation.polygons import Polygons
+from map_annotation.utils import non_decreasing, non_increasing, monotonic
 from map_annotation.transforms import CoordTransformer
 
 
@@ -113,7 +113,6 @@ class Lanes:
         return bounding_box, box
 
     def rotate_point(self, point, origin, angle):
-
         ox, oy = origin
         px, py = point
 
@@ -129,7 +128,7 @@ class Lanes:
         Select the lanes that are within the specified bounding box.
         """
         if frame == "lon-lat":
-            pass
+            raise ValueError(f"Frame {frame} not implemented.")
         lanes = self.lanes
 
         return self._get_lanes_in_box(
@@ -147,11 +146,6 @@ class Lanes:
             target_agent_id, global_pose, map_extent, yaw_angle
         )
 
-        # x_min = box[0,0]
-        # x_max = box[0,1]
-        # y_min = box[1,0]
-        # y_max = box[1,1]
-
         # Checks for lanes that geometrically match the region of the frame of interest
         lanes_in_box = []
 
@@ -161,12 +155,6 @@ class Lanes:
 
             if line.intersects(box):
                 lanes_in_box.append(lane_id)
-
-            # for node in lane.centerline.nodes_utm:
-            #     if lane_id in lanes_in_box:
-            #         pass
-            #     elif (x_min <= node[0] < x_max) & (y_min <= node[1] < y_max):
-            #        lanes_in_box.append(lane_id)
 
         return lanes_in_box
 
@@ -180,86 +168,71 @@ class Lanes:
         successors = self.lanes[lane_id].successors
 
         # Select lanes with successors
-        if not successors:
-            pass
-        elif successors is None:
-            pass
-        else:
-            successors = successors.split(",")
+        if successors is None or not successors:
+            return None
 
-            lane_connectors = []
-            dist_threshold = dist_thres
-            element_ids = polygons.get_polygons_in_box(
-                polygons, global_pose, map_extent, frame="utm"
-            )
+        successors = successors.split(",")
 
-            ref_lane_start = Point(self.lanes[lane_id].centerline.nodes_utm[0])
-            ref_lane_end = Point(self.lanes[lane_id].centerline.nodes_utm[-1])
+        lane_connectors = []
+        dist_threshold = dist_thres
+        element_ids = polygons.get_polygons_in_box(
+            polygons, global_pose, map_extent, frame="utm"
+        )
 
-            for successor in successors:
-                successor = int(successor)
-                (
-                    ref_point,
-                    connection_points_1,
-                    connection_points_2,
-                ) = self.determine_connnection_points(lane_id, ref_lane_end, successor)
+        ref_lane_start = Point(self.lanes[lane_id].centerline.nodes_utm[0])
+        ref_lane_end = Point(self.lanes[lane_id].centerline.nodes_utm[-1])
 
-                for element_id in element_ids:
-                    # Filter polygons to intersections only
-                    if polygons[element_id].type.tolist()[0] == "intersection":
-                        # Determines whether intersection geomatches final lane node
-                        ref_polygon = Polygon(polygons[element_id].bounds.nodes_utm)
-                        dist = LineString(nearest_points(ref_point, ref_polygon)).length
+        for successor in successors:
+            successor = int(successor)
+            (
+                ref_point,
+                connection_points_1,
+                connection_points_2,
+            ) = self.determine_connnection_points(lane_id, ref_lane_end, successor)
 
-                        # if lane end is within threshold from an intersection
-                        if dist < dist_threshold:
-                            connection_line = np.concatenate(
-                                (connection_points_1, connection_points_2), axis=0
-                            )
+            for element_id in element_ids:
+                # Filter polygons to intersections only
+                if polygons[element_id].type.tolist()[0] == "intersection":
+                    # Determines whether intersection geomatches final lane node
+                    ref_polygon = Polygon(polygons[element_id].bounds.nodes_utm)
+                    dist = LineString(nearest_points(ref_point, ref_polygon)).length
 
-                            x = np.asarray([i[0] for i in connection_line])
-                            y = np.asarray([i[1] for i in connection_line])
+                    # if lane end is within threshold from an intersection
+                    if dist < dist_threshold:
+                        connection_line = np.concatenate(
+                            (connection_points_1, connection_points_2), axis=0
+                        )
 
-                            xt, yt = self.interpolate_lane_connector(x, y)
+                        x = np.asarray([i[0] for i in connection_line])
+                        y = np.asarray([i[1] for i in connection_line])
 
-                            # Remove points not located within the refernce intersection
-                            points = list(zip(xt, yt))
-                            pop = []
+                        xt, yt = self.interpolate_lane_connector(x, y)
 
-                            for idx, point in enumerate(points):
-                                point = Point(point)
-                                # Use distance function as contain/within methods have rounding errors
-                                if point.distance(ref_polygon) > 1e-3:
-                                    pop.append(idx)
+                        # Remove points not located within the refernce intersection
+                        points = list(zip(xt, yt))
+                        pop = []
 
-                            pop.reverse()
+                        for idx, point in enumerate(points):
+                            point = Point(point)
+                            # Use distance function as contain/within methods have rounding errors
+                            if point.distance(ref_polygon) > 1e-3:
+                                pop.append(idx)
 
-                            for to_pop in pop:
-                                points.pop(to_pop)
+                        pop.reverse()
 
-                            connector_geom = LineString(points)
+                        for to_pop in pop:
+                            points.pop(to_pop)
 
-                            # x_val = [i[0] for i in points]
-                            # y_val = [i[1] for i in points]
+                        connector_geom = LineString(points)
 
-                            # plt.scatter(x_val, y_val, color='g')
-                            # plt.plot(x_val, y_val, color='g')
-                            # plt.scatter(xt, yt, alpha=0.2)
-                            # plt.scatter(connection_points_1[:,0], connection_points_1[:,1], color='r')
-                            # plt.scatter(connection_points_2[:,0], connection_points_2[:,1], color='r')
-                            # plt.plot(polygons[element_id].bounds.nodes_utm[:,0], polygons[element_id].bounds.nodes_utm[:,1])
-                            # plt.show()
+                        lane_connections = {
+                            "connector_id": f"{lane_id}_{successor}",
+                            "intersection_id": element_id,
+                            "connection_line": connector_geom,
+                        }
+                        lane_connectors.append(lane_connections)
 
-                            # exit()
-
-                            lane_connections = {
-                                "connector_id": f"{lane_id}_{successor}",
-                                "intersection_id": element_id,
-                                "connection_line": connector_geom,
-                            }
-                            lane_connectors.append(lane_connections)
-
-            return lane_connectors
+        return lane_connectors
 
     def determine_connnection_points(self, lane_id, ref_lane_end, successor):
         connection_points_1 = self.lanes[lane_id].centerline.nodes_utm[-3:]
@@ -344,15 +317,6 @@ class Lanes:
             discretization.append(new_pose)
 
             start_pose = new_pose
-
-        # x, y, theta = zip(*discretization)
-        # plt.scatter(x, y)
-        # plt.plot(x,y)
-        # plt.scatter(discretization[-1][0], discretization[-1][1])
-        # plt.plot(*line.coords.xy)
-        # plt.show()
-
-        # print(discretization)
 
         return discretization
 
@@ -559,9 +523,6 @@ class Lane:
         ):
             left_line = np.flipud(left_line)
 
-        # if check_lane_direction(left_lane=left_line, right_lane=right_line, yaw_diff_threshold=np.pi/2):
-        #     left_line = np.flipud(left_line)
-
         lr_line = np.stack([left_line, right_line], axis=-1)
         midpoints = [
             [(left_coord + right_coord) / 2 for left_coord, right_coord in point]
@@ -574,56 +535,15 @@ class Lane:
 
 
 def check_lane_direction(left_lane, right_lane, yaw_diff_threshold):
-
-    # Implement yaw threshold check
-    # yaw_rb = 0
-    # yaw_lb = 0
-
-    # for i in range(len(right_lane) - 1):
-    #     yaw_rb += np.arctan2((right_lane[i + 1, 0] - right_lane[i, 0]), (right_lane[i + 1, 1] - right_lane[i, 1]))
-
-    # for i in range(len(left_lane) - 1):
-    #     yaw_lb += np.arctan2((left_lane[i + 1, 0] - left_lane[i, 0]), (left_lane[i + 1, 1] - left_lane[i, 1]))
-
-    # avg_yaw_rb = yaw_rb / (len(right_lane) - 1)
-    # avg_yaw_lb = yaw_lb / (len(left_lane) - 1)
-
-    # yaw_diff = np.abs(avg_yaw_lb - avg_yaw_rb)
-
-    # if yaw_diff > yaw_diff_threshold:
-    #     return True
-    # else:
-    #     return False
-
     start_left, end_left = np.array(left_lane[0]), np.array(left_lane[-1])
     start_right, end_right = np.array(right_lane[0]), np.array(right_lane[-1])
 
     left_lane_vector = end_left - start_left
     right_lane_vector = end_right - start_right
 
-    # lane_check = False
-
-    # if np.sign(left_lane_vector[0]) != np.sign(right_lane_vector[0]) or np.sign(left_lane_vector[1]) != np.sign(right_lane_vector[1]):
-    #     lane_check = True
-
     cos_sim = (left_lane_vector @ right_lane_vector.T) / (
         norm(left_lane_vector) * norm(right_lane_vector)
     )
-
-    # Implement yaw threshold check
-    # yaw_rb = 0
-    # yaw_lb = 0
-
-    # for i in range(len(right_lane) - 1):
-    #     yaw_rb += np.arctan2((right_lane[i + 1, 0] - right_lane[i, 0]), (right_lane[i + 1, 1] - right_lane[i, 1]))
-
-    # for i in range(len(left_lane) - 1):
-    #     yaw_lb += np.arctan2((left_lane[i + 1, 0] - left_lane[i, 0]), (left_lane[i + 1, 1] - left_lane[i, 1]))
-
-    # avg_yaw_rb = yaw_rb / (len(right_lane) - 1)
-    # avg_yaw_lb = yaw_lb / (len(left_lane) - 1)
-
-    # yaw_diff = np.abs(avg_yaw_lb - avg_yaw_rb)
 
     if cos_sim < 0:
         return True

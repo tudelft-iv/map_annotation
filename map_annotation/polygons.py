@@ -1,4 +1,3 @@
-# from fiona import bounds
 import pyproj
 import utm
 
@@ -153,4 +152,3 @@ class Polygon:
         bounds = Bounds(self.id, self.type, nodes)
 
         return bounds
-
