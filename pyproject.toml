@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = 'map_annotation'
-version = "0.0.1"
+version = "0.1.0"
 authors = [
   { name = "B. Martens", email="b.k.w.martems@student.tudelft.nl" },
   { name = "H. Boekema", email="h.j.boekema@tudelft.nl" }

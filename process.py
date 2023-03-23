@@ -1,81 +1,53 @@
-import pyproj
+import argparse
+import glob
 import os
-import numpy as np
-from numpy.linalg import norm
+
 import geopandas as gpd
+import numpy as np
 import pandas as pd
-import fiona
-
-from shapely.geometry import Polygon, LineString, Point
-from shapely.ops import substring, nearest_points
-
-import matplotlib.pyplot as plt
+from shapely.geometry import LineString, Point, Polygon
+from shapely.ops import nearest_points, substring
 
 from map_annotation.lanes import Lanes
 from map_annotation.polygons import Polygons
 
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "-i", "--input", help="path to directory with raw annotations", required=True
+)
+parser.add_argument(
+    "-o", "--output", help="path to store processed annotations", required=True
+)
 
-def check_lane_direction(left_lane, right_lane, yaw_diff_threshold):
-
-    start_left, end_left = np.array(left_lane[0]), np.array(left_lane[-1])
-    start_right, end_right = np.array(right_lane[0]), np.array(right_lane[-1])
-
-    left_lane_vector = end_left - start_left
-    right_lane_vector = end_right - start_right
-
-    # lane_check = False
-
-    # if np.sign(left_lane_vector[0]) != np.sign(right_lane_vector[0]) or np.sign(left_lane_vector[1]) != np.sign(right_lane_vector[1]):
-    #     lane_check = True
-
-    cos_sim = (left_lane_vector @ right_lane_vector.T) / (
-        norm(left_lane_vector) * norm(right_lane_vector)
-    )
-
-    # Implement yaw threshold check
-    # yaw_rb = 0
-    # yaw_lb = 0
-
-    # for i in range(len(right_lane) - 1):
-    #     yaw_rb += np.arctan2((right_lane[i + 1, 0] - right_lane[i, 0]), (right_lane[i + 1, 1] - right_lane[i, 1]))
-
-    # for i in range(len(left_lane) - 1):
-    #     yaw_lb += np.arctan2((left_lane[i + 1, 0] - left_lane[i, 0]), (left_lane[i + 1, 1] - left_lane[i, 1]))
-
-    # avg_yaw_rb = yaw_rb / (len(right_lane) - 1)
-    # avg_yaw_lb = yaw_lb / (len(left_lane) - 1)
-
-    # yaw_diff = np.abs(avg_yaw_lb - avg_yaw_rb)
-
-    if cos_sim < 0:
-        return True
-
-    return False
-    # else:
-    #     return False
+args = parser.parse_args()
+input_dir = args.input
+output_dir = args.output
 
 
 """Pre-processing of polygons"""
 # Load different polygon types
-df1 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Intersections_b.gpkg')
-intersections_b = gpd.GeoDataFrame.explode(df1, index_parts=False)
-df2 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Intersections_h.gpkg')
-intersections_h = gpd.GeoDataFrame.explode(df2, index_parts=False)
-intersections = pd.concat([intersections_b, intersections_h], ignore_index=True)
+intersections_files = glob.glob(os.path.join(input_dir, "Intersections*.gpkg"))
+intersections_dfs = [
+    gpd.GeoDataFrame.explode(gpd.read_file(filepath), index_parts=False)
+    for filepath in intersections_files
+]
+intersections = pd.concat(intersections_dfs, ignore_index=True)
 
-df3 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Crosswalks_b.gpkg')
-crosswalks_b = gpd.GeoDataFrame.explode(df3, index_parts=False)
-df4 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Crosswalks_h.gpkg')
-crosswalks_h = gpd.GeoDataFrame.explode(df4, index_parts=False)
-crosswalks = pd.concat([crosswalks_b, crosswalks_h], ignore_index=True)
+crosswalks_files = glob.glob(os.path.join(input_dir, "Crosswalks*.gpkg"))
+crosswalks_dfs = [
+    gpd.GeoDataFrame.explode(gpd.read_file(filepath), index_parts=False)
+    for filepath in crosswalks_files
+]
+crosswalks = pd.concat(crosswalks_dfs, ignore_index=True)
 
-df5 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Offroad_b.gpkg')
-offroad_b = gpd.GeoDataFrame.explode(df5, index_parts=False)
-df6 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Offroad_h.gpkg')
-offroad_h = gpd.GeoDataFrame.explode(df6, index_parts=False)
-offroad = pd.concat([offroad_b, offroad_h], ignore_index=True)
+offroad_files = glob.glob(os.path.join(input_dir, "Offroad*.gpkg"))
+offroad_dfs = [
+    gpd.GeoDataFrame.explode(gpd.read_file(filepath), index_parts=False)
+    for filepath in offroad_files
+]
+offroad = pd.concat(offroad_dfs, ignore_index=True)
 
-# Assign type to polygon type
+# Assign type to polygon type field
 intersections["type"] = "intersection"
 crosswalks["type"] = "crosswalk"
 offroad["type"] = "off_road"
@@ -88,16 +60,17 @@ for idx, id in enumerate(polygons["element_id"]):
     polygons["element_id"][idx] = idx + 1
 
 # Create new file with pre-processed annotations
-polygons.to_file("data/polygons_preprocessed.gpkg", driver="GPKG")
+polygons.to_file(os.path.join(output_dir, "polygons.gpkg"), driver="GPKG")
 
 """-------------------------------------------------------------------"""
 """Pre-processing of lanes"""
 # Load lane segments
-df7 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Lanes_b.gpkg')
-lanes_b = gpd.GeoDataFrame.explode(df7, index_parts=False)
-df8 = gpd.read_file(f'{os.environ["MA_DATA_DIR"]}/Lanes_h.gpkg')
-lanes_h = gpd.GeoDataFrame.explode(df8, index_parts=False)
-lanes = pd.concat([lanes_b, lanes_h], ignore_index=True)
+lanes_files = glob.glob(os.path.join(input_dir, "Lanes*.gpkg"))
+lanes_dfs = [
+    gpd.GeoDataFrame.explode(gpd.read_file(filepath), index_parts=False)
+    for filepath in lanes_files
+]
+lanes = pd.concat(lanes_dfs, ignore_index=True)
 
 # Assign correct lane_ids, save lane_ids changelog
 lane_ids = list(lanes["lane_id"])
@@ -124,37 +97,6 @@ for item in ["successors", "predecessors"]:
 lanes = lanes.sort_values(by=["lane_id"], ignore_index=True)
 for idx, id in enumerate(lanes["element_id"]):
     lanes["element_id"][idx] = idx + 1
-
-# for _, lane in lanes.iterrows():
-#     id = lane['lane_id']
-
-#     options = lanes[lanes['lane_id'] == id]
-
-#     for _, lane in options.iterrows():
-#         if lane['boundary_left']:
-#             left_id = lane['lane_id']
-#             left_lane = np.array(lane['geometry'].coords)
-#         if lane['boundary_right']:
-#             right_id = lane['lane_id']
-#             right_lane = np.array(lane['geometry'].coords)
-
-#     if check_lane_direction(left_lane, right_lane, np.pi/2):
-#         print(lanes[lanes['element_id'] == left_id]['geometry'])
-#         lanes[lanes['element_id'] == left_id]['geometry'] = substring(lanes[lanes['element_id'] == left_id]['geometry'].tolist()[0], 1, 0, normalized=True)
-#         print(lanes[lanes['element_id'] == left_id]['geometry'])
-#         exit()
-
-# ref_point = Point(left_lane[0])
-# if ref_point.distance(Point(right_lane[0])) > ref_point.distance(Point(right_lane[-1])):
-#     lanes[lanes['element_id'] == left_id]['geometry'] = substring(lanes[lanes['element_id'] == left_id]['geometry'].tolist()[0], 1, 0, normalized=True)
-#     left_lane = np.array(lanes[lanes['element_id'] == left_id]['geometry'].tolist()[0].coords)
-
-# ref_point = Point(left_lane[0])
-# if ref_point.distance(Point(right_lane[0])) > ref_point.distance(Point(right_lane[-1])) or check_lane_direction(left_lane, right_lane, 0):
-#     print('checks_failed')
-#     print(id)
-#     print(left_lane, right_lane)
-#     exit()
 
 
 # Duplicate bi-directional lanes, flip the direction and split the predecessors and successors based on the lane annotations
@@ -322,11 +264,12 @@ for idx, lane in lanes.iterrows():
 
 # Run label consistency checks on lane annotations
 for col, item in lanes.iterrows():
-    if (item["boundary_right"] == True and item["boundary_left"] == True) or (
-        item["boundary_right"] == False and item["boundary_left"] == False
+    if (item["boundary_right"] is True and item["boundary_left"] is True) or (
+        item["boundary_right"] is False and item["boundary_left"] is False
     ):
-        assert f"Error! Lane has incorrect boundary booleans."
-        print(item["element_id"])
+        raise ValueError(
+            f"Error! Lane '{item['element_id']}' has incorrect boundary booleans."
+        )
 
     lane_id = item["lane_id"]
 
@@ -350,23 +293,18 @@ for col, item in lanes.iterrows():
 print("Done, all good to go!")
 
 # Create new file with pre-processed annotations
-lanes.to_file("data/lanes_preprocessed.gpkg", driver="GPKG")
+lanes.to_file(os.path.join(output_dir, "lanes.gpkg"), driver="GPKG")
 
 
 """-------------------------------------------------------------------"""
 """Pre-processing of lane connectors"""
 
-lanes = gpd.read_file("data/lanes_preprocessed.gpkg")
-lanes = gpd.GeoDataFrame.explode(lanes, index_parts=False)
-lanes = Lanes().from_df(lanes)
-
-polygons = gpd.read_file("data/polygons_preprocessed.gpkg")
-polygons = gpd.GeoDataFrame.explode(polygons, index_parts=False)
-polygons = Polygons().from_df(polygons)
+lanes = Lanes().load(os.path.join(output_dir, "lanes.gpkg"))
+polygons = Polygons().load(os.path.join(output_dir, "polygons.gpkg"))
 
 lane_connectors = []
 
-for lane_id in lanes.lane_ids:
+for lane_id in lanes.element_ids:
     successors = lanes[lane_id].successors
     print(lane_id)
 
@@ -457,6 +395,6 @@ for connector in lane_connectors:
 
 
 lane_connections = gpd.GeoDataFrame(lane_connections, geometry="connection_line")
-lane_connections.to_file("data/lane_connectors_preprocessed.gpkg", driver="GPKG")
+lane_connections.to_file(os.path.join(output_dir, "connectors.gpkg"), driver="GPKG")
 
 print("Done")
