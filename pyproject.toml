@@ -9,14 +9,21 @@ authors = [
   { name = "B. Martens", email="b.k.w.martems@student.tudelft.nl" },
   { name = "H. Boekema", email="h.j.boekema@tudelft.nl" }
 ] 
-description = "Map annotation package"
+description = "Small annotation for processing map annotations"
 readme = "README.md"
 license = { file="LICENSE" }
-requires-python = ">=3.7"
+requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy>=1.23.0",
+    "geopandas>=0.11.0",
+    "utm>=0.7.0",
+    "scipy==1.10.1",
+    "tqdm==4.65.0",
 ]
 
 [project.urls]
