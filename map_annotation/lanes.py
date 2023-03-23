@@ -18,6 +18,7 @@ class Lanes(RoadElementCollection):
         Initialize lane geometry
         """
         super().__init__()
+        self.element_ids = None
 
     def from_df(self, df):
         """
