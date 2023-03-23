@@ -30,6 +30,7 @@ E.g. for the structure of the `data` directory of this repository:
 ```bash
 $ python process.py -i data/annotations -o data/processed
 ```
+**Note: the `process.py` script currently does not work.**
 
 #### Annotation format
 TODO: explainer on the format of the annotations i.e. what fields are expected for each map element.
