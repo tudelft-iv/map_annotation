@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.interpolate import interp1d, UnivariateSpline
+from scipy.interpolate import interp1d
 
 
 def parametric_spline(path_xy, kind):

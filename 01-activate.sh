@@ -14,6 +14,9 @@ export MA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"; pwd)"
 export MA_DATA_DIR="${MA_DIR}/data"
 export MA_SRC_DIR="${MA_DIR}/src"
 
+export PYTHONPATH="$MA_DIR:$PYTHONPATH"
+export PYTHONPATH="$MA_SRC_DIR:$PYTHONPATH"
+
 conda activate map_annotation
 
 echo "Done"
