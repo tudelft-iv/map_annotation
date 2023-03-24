@@ -20,12 +20,14 @@ class Polygons(RoadElementCollection):
             geometry_data = df[df["element_id"] == element_id]
 
             # nodes = np.array((geometry_data['geometry'][0]).exterior.coords)
-            road_type = geometry_data["road_type"]
-            allowed_agents = geometry_data["allowed_agents"]
+            road_type = geometry_data["road_type"].tolist()[0]
+            polygon_type = geometry_data["type"].tolist()[0]
+            allowed_agents = geometry_data["allowed_agents"].tolist()[0]
             geometry = geometry_data["geometry"]
 
             polygon = Polygon(
                 element_id,
+                polygon_type,
                 road_type,
                 allowed_agents,
                 geometry,
@@ -70,9 +72,10 @@ class Polygons(RoadElementCollection):
 
 
 class Polygon(RoadElement):
-    def __init__(self, element_id, road_type, allowed_agents, geometry):
+    def __init__(self, element_id, polygon_type, road_type, allowed_agents, geometry):
         super().__init__(element_id, road_type, allowed_agents)
         self.geometry = geometry
+        self.type = polygon_type
         self._bounds = None
 
     @property

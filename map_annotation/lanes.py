@@ -28,6 +28,7 @@ class Lanes(RoadElementCollection):
 
         # Retrieve lane data
         print("Loading map annotations...")
+        mismatched_ids = {}
         for lane_id in tqdm(self.element_ids):
 
             lane_data = df[df["lane_id"] == lane_id]
@@ -36,15 +37,26 @@ class Lanes(RoadElementCollection):
                 lane_data[lane_data["boundary_right"]].squeeze().to_dict()
             )
 
+            road_type_left = left_bound_data["road_type"]
+            road_type_right = right_bound_data["road_type"]
+            if road_type_left != road_type_right:
+                # log lane id and choose the left type for now
+                mismatched_ids[lane_id] = (road_type_left, road_type_right)
+
+                # raise ValueError(
+                #    f"Boundary road types for lane '{lane_id}' do not match. Road types: {road_type_left}, {road_type_right} (L,R)."
+                # )
+            road_type = left_bound_data["road_type"]
+
             left_boundary = RoadLine(
                 left_bound_data["lane_id"],
                 np.array(left_bound_data["geometry"].coords)[:, :2],
-                road_type=left_bound_data["road_type"],
+                road_type=road_type,
             )
             right_boundary = RoadLine(
                 right_bound_data["lane_id"],
                 np.array(right_bound_data["geometry"].coords)[:, :2],
-                road_type=right_bound_data["road_type"],
+                road_type=road_type,
             )
 
             predecessors = right_bound_data["predecessors"]
@@ -58,8 +70,10 @@ class Lanes(RoadElementCollection):
                 predecessors,
                 successors,
                 allowed_agents,
+                road_type,
             )
 
+        print("Mismatched boundary types: ", mismatched_ids)
         return self
 
     def get_lanes_in_box(self, box, frame="utm"):
@@ -263,6 +277,32 @@ class Lane:
 
     def discretize(self, resolution):
         return self.centerline.discretize(resolution)
+
+    def get_polygon(self, frame="utm"):
+        """
+        Calculate lane polygon based on lane boundaries
+        """
+        lbound = self.left_boundary.get_attr_in_frame("nodes", frame)
+        rbound = self.right_boundary.get_attr_in_frame("nodes", frame)
+
+        # check directions of bounds
+        # they need to be in oppposite directions for this to work
+        # use right boundary as guide
+        ref = rbound[-1]
+
+        start_dist = np.sum((lbound[0] - ref) ** 2)
+        end_dist = np.sum((lbound[-1] - ref) ** 2)
+
+        if end_dist < start_dist:
+            # the left bound needs to be reversed to make a polygon
+            lbound = lbound[::-1]
+
+        # combine lane bound nodes to make polygon (final elem for closure)
+        polygon = np.vstack([rbound, lbound, rbound[0]])
+        return polygon
+
+    def get_direction(self):
+        raise NotImplementedError
 
 
 def check_lane_direction(left_lane, right_lane, yaw_diff_threshold):

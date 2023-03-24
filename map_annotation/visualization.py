@@ -1,8 +1,8 @@
 from matplotlib import pyplot as plt
 
+from map_annotation.connectors import Connectors
 from map_annotation.lanes import Lanes
 from map_annotation.polygons import Polygons
-from map_annotation.connectors import Connectors
 
 
 def visualize_lanes(lanes: Lanes, fig=None):
