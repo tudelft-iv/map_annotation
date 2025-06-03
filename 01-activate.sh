@@ -17,7 +17,6 @@ export MA_SRC_DIR="${MA_DIR}/src"
 export PYTHONPATH="$MA_DIR:$PYTHONPATH"
 export PYTHONPATH="$MA_SRC_DIR:$PYTHONPATH"
 
-conda activate map_annotation
+conda activate map-annotation
 
 echo "Done"
-
