@@ -1,11 +1,17 @@
+import ast
+
+import geopandas as gpd
+import matplotlib.pyplot as plt
 import numpy as np
 import shapely
-from numpy.linalg import norm
+from centerline.geometry import Centerline
 from shapely.geometry import LineString, Point, Polygon
-from shapely.ops import nearest_points
+from shapely.ops import linemerge, nearest_points
 from tqdm import tqdm
 
-from map_annotation.road_elements import RoadElementCollection, RoadLine
+from map_annotation.road_elements import (RoadElement, RoadElementCollection,
+                                          RoadLine)
+from map_annotation.utils import list_to_str, parse_str_to_list
 
 
 class Lanes(RoadElementCollection):
@@ -13,55 +19,51 @@ class Lanes(RoadElementCollection):
     Lanes class to handle all required lane operations
     """
 
-    def __init__(self):
+    def __init__(self, verbose=False):
         """
         Initialize lane geometry
         """
         super().__init__()
         self.element_ids = None
+        self.verbose = verbose
 
     def from_df(self, df):
         """
         Retrieve lane information from labelled data.
         """
-        self.element_ids = list(set(df["lane_id"].astype("int64").values))
+        self.element_ids = list(set(df["element_id"].astype(str).values))
 
         # Retrieve lane data
-        print("Loading map annotations...")
-        mismatched_ids = {}
-        for lane_id in tqdm(self.element_ids):
+        if self.verbose:
+            print("Loading map annotations...")
 
-            lane_data = df[df["lane_id"] == lane_id]
-            left_bound_data = lane_data[lane_data["boundary_left"]].squeeze().to_dict()
-            right_bound_data = (
-                lane_data[lane_data["boundary_right"]].squeeze().to_dict()
-            )
+        for idx, lane_data in df.iterrows():
+            lane_id = str(lane_data["element_id"])
 
-            road_type_left = left_bound_data["road_type"]
-            road_type_right = right_bound_data["road_type"]
-            if road_type_left != road_type_right:
-                # log lane id and choose the left type for now
-                mismatched_ids[lane_id] = (road_type_left, road_type_right)
+            road_type = RoadElement.RoadType(int(lane_data["road_type"]))
+            allowed_agents = RoadElement.RoadType_AllowedAgents_map[road_type]
 
-                # raise ValueError(
-                #    f"Boundary road types for lane '{lane_id}' do not match. Road types: {road_type_left}, {road_type_right} (L,R)."
-                # )
-            road_type = left_bound_data["road_type"]
+            lbound, rbound = ast.literal_eval(
+                lane_data["boundary_left"]
+            ), ast.literal_eval(lane_data["boundary_right"])
+
+            polygon = np.array(list(lane_data["geometry"].exterior.coords))
 
             left_boundary = RoadLine(
-                left_bound_data["lane_id"],
-                np.array(left_bound_data["geometry"].coords)[:, :2],
+                lane_id,
+                np.array(lbound),
+                line_type=RoadLine.LineType.BOUNDARY,
                 road_type=road_type,
             )
             right_boundary = RoadLine(
-                right_bound_data["lane_id"],
-                np.array(right_bound_data["geometry"].coords)[:, :2],
+                lane_id,
+                np.array(rbound),
+                line_type=RoadLine.LineType.BOUNDARY,
                 road_type=road_type,
             )
 
-            predecessors = right_bound_data["predecessors"]
-            successors = right_bound_data["successors"]
-            allowed_agents = right_bound_data["allowed_agents"]
+            predecessors = parse_str_to_list(lane_data["predecessors"])
+            successors = parse_str_to_list(lane_data["successors"])
 
             self.elements[lane_id] = Lane(
                 lane_id,
@@ -71,32 +73,54 @@ class Lanes(RoadElementCollection):
                 successors,
                 allowed_agents,
                 road_type,
+                polygon=polygon,
             )
 
-        print("Mismatched boundary types: ", mismatched_ids)
+        if self.verbose:
+            print("Done.")
+
         return self
 
-    def get_lanes_in_box(self, box, frame="utm"):
+    def from_list(self, lanes):
+        for lane in lanes:
+            self.elements[lane.id] = lane
+
+        return self
+
+    def to_df(self, crs="EPSG:28992"):
+        return gpd.GeoDataFrame([lane.to_dict() for lane in self], crs=crs)
+
+    def _get_clines(self):
+        clines = {
+            lane_id: lane.centerline.nodes for lane_id, lane in self.elements.items()
+        }
+        return clines
+
+    def get_lanes_in_circle(self, centre, radius):
+        """
+        Select the lanes that are within the specified circle.
+        """
+        clines = self._get_clines()
+        circle = Point(centre).buffer(radius)
+        return self._get_lanes_in_geometry(clines, circle)
+
+    def get_lanes_in_box(self, box):
         """
         Select the lanes that are within the specified bounding box.
         :param box: array of bounds in the form of [xmin, ymin, xmax, ymax]
-        :param frame: frame to compute intersection in
         """
-        clines = {
-            lane_id: lane.centerline.get_attr_in_frame("nodes", frame)
-            for lane_id, lane in self.elements.items()
-        }
+        clines = self._get_clines()
         box = shapely.geometry.box(*box)
-        return self._get_lanes_in_box(clines, box)
+        return self._get_lanes_in_geometry(clines, box)
 
     @staticmethod
-    def _get_lanes_in_box(lanes, box):
+    def _get_lanes_in_geometry(lanes, geometry):
         """
-        Select the lanes that are within the specified bounding box.
+        Select the lanes that are within the specified geometry.
         """
         lanes_in_box = []
         for lane_id, lane_line in lanes.items():
-            if LineString(lane_line).intersects(box):
+            if LineString(lane_line).intersects(geometry):
                 # note: this tests whether any part of the line intersects with the box AREA
                 lanes_in_box.append(lane_id)
 
@@ -198,6 +222,11 @@ class Lanes(RoadElementCollection):
         return left_neighbours, right_neighbours
 
 
+def keep_unique(ls):
+    points, idx = np.unique(ls, axis=0, return_index=True)
+    return points[np.argsort(idx), :]
+
+
 class Lane:
     def __init__(
         self,
@@ -208,6 +237,8 @@ class Lane:
         successors,
         allowed_agents,
         lane_type=None,
+        polygon=None,
+        centerline=None,
     ):
         self.id = lane_id
         self.predecessors = predecessors
@@ -217,7 +248,10 @@ class Lane:
 
         self._left_boundary = left_boundary
         self._right_boundary = right_boundary
-        self._centerline = None
+        self._polygon = polygon
+        self._centerline = centerline
+        self._start_line = None
+        self._end_line = None
 
     @property
     def left_boundary(self):
@@ -227,6 +261,9 @@ class Lane:
     def left_boundary(self, data):
         self._left_boundary = data
         self._centerline = None
+        self._polygon = None
+        self._start_line = None
+        self._end_line = None
 
     @property
     def right_boundary(self):
@@ -236,6 +273,15 @@ class Lane:
     def right_boundary(self, data):
         self._right_boundary = data
         self._centerline = None
+        self._polygon = None
+        self._start_line = None
+        self._end_line = None
+
+    @property
+    def polygon(self):
+        if self._polygon is None:
+            self._polygon = self._get_polygon()
+        return self._polygon
 
     @property
     def centerline(self):
@@ -245,27 +291,32 @@ class Lane:
         return self._centerline
 
     def _calculate_centerline(self):
-        left_line = self.left_boundary.interpolate(frame="nl")
-        right_line = self.right_boundary.interpolate(frame="nl")
+        left_line = self.left_boundary.interp1d(n_points=40)
+        right_line = self.right_boundary.interp1d(n_points=40)
         assert len(left_line) == len(
             right_line
-        ), "Error! The left and right boundaries do not consist of equal points."
+        ), "The left and right boundaries do not consist of equal points."
 
-        ref_point = Point(right_line[0])
-        # ref_point2 = Point(right_line[-1])
-
-        if ref_point.distance(Point(left_line[0])) > ref_point.distance(
-            Point(left_line[-1])
-        ):
-            # the left boundary is annotated in the reverse direction of the lane
-            # and therefore needs to be flipped
-            left_line = np.flipud(left_line)
+        # the left boundary is annotated in the reverse direction of the lane
+        # and therefore needs to be flipped
+        left_line = np.flipud(left_line)
 
         lr_line = np.stack([left_line, right_line], axis=-1)
-        midpoints = [
-            [(left_coord + right_coord) / 2 for left_coord, right_coord in point]
-            for point in lr_line
-        ]
+        midpoints = np.array(
+            [
+                [(left_coord + right_coord) / 2 for left_coord, right_coord in point]
+                for point in lr_line
+            ]
+        )
+
+        # plt.scatter(left_line[:, 0], left_line[:, 1])
+        # plt.scatter(right_line[:, 0], right_line[:, 1])
+        # plt.plot(left_line[:, 0], left_line[:, 1])
+        # plt.plot(right_line[:, 0], right_line[:, 1])
+        # plt.plot(midpoints[:, 0], midpoints[:, 1])
+        # for line in lr_line:
+        #    plt.plot(line[0], line[1])
+        # plt.show()
 
         centerline = RoadLine(
             self.id,
@@ -275,45 +326,67 @@ class Lane:
 
         return centerline
 
+    @property
+    def start_line(self):
+        if self._start_line is None:
+            self._start_line, self._end_line = self._compute_start_end_lines()
+        return self._start_line
+
+    @property
+    def end_line(self):
+        if self._end_line is None:
+            self._start_line, self._end_line = self._compute_start_end_lines()
+        return self._end_line
+
+    def _compute_start_end_lines(self):
+        # Note: the left boundary is annotated in the reverse direction of the lane
+        left_line = self.left_boundary.nodes
+        right_line = self.right_boundary.nodes
+
+        # these lines follow the right-hand rule i.e. are anti-clockwise
+        start_line_coords = (left_line[-1], right_line[0])
+        end_line_coords = (right_line[-1], left_line[0])
+
+        start_line = RoadLine(
+            self.id,
+            np.array(start_line_coords),
+            road_type=RoadLine.LineType.START_LINE,
+        )
+
+        end_line = RoadLine(
+            self.id,
+            np.array(end_line_coords),
+            road_type=RoadLine.LineType.END_LINE,
+        )
+
+        return start_line, end_line
+
     def discretize(self, resolution):
         return self.centerline.discretize(resolution)
 
-    def get_polygon(self, frame="utm"):
+    def _get_polygon(self):
         """
         Calculate lane polygon based on lane boundaries
         """
-        lbound = self.left_boundary.get_attr_in_frame("nodes", frame)
-        rbound = self.right_boundary.get_attr_in_frame("nodes", frame)
-
-        # check directions of bounds
-        # they need to be in oppposite directions for this to work
-        # use right boundary as guide
-        ref = rbound[-1]
-
-        start_dist = np.sum((lbound[0] - ref) ** 2)
-        end_dist = np.sum((lbound[-1] - ref) ** 2)
-
-        if end_dist < start_dist:
-            # the left bound needs to be reversed to make a polygon
-            lbound = lbound[::-1]
+        lbound = self.left_boundary.nodes
+        rbound = self.right_boundary.nodes
 
         # combine lane bound nodes to make polygon (final elem for closure)
         polygon = np.vstack([rbound, lbound, rbound[0]])
         return polygon
 
-    def get_direction(self):
-        raise NotImplementedError
-
-
-def check_lane_direction(left_lane, right_lane, yaw_diff_threshold):
-    start_left, end_left = np.array(left_lane[0]), np.array(left_lane[-1])
-    start_right, end_right = np.array(right_lane[0]), np.array(right_lane[-1])
-
-    left_lane_vector = end_left - start_left
-    right_lane_vector = end_right - start_right
-
-    cos_sim = (left_lane_vector @ right_lane_vector.T) / (
-        norm(left_lane_vector) * norm(right_lane_vector)
-    )
-
-    return cos_sim < 0
+    def to_dict(self):
+        lane_dict = {
+            "element_id": self.id,
+            "road_type": self.type.value,
+            "lane_id": self.id,
+            "from_object": None,
+            "to_object": None,
+            "connects_to": None,
+            "successors": list_to_str(self.successors),
+            "predecessors": list_to_str(self.predecessors),
+            "boundary_left": list_to_str(list(self.left_boundary.nodes)),
+            "boundary_right": list_to_str(list(self.left_boundary.nodes)),
+            "geometry": Polygon(self.polygon),
+        }
+        return lane_dict

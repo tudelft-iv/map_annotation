@@ -4,36 +4,65 @@ from enum import Enum
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-import pyproj
-import utm
-from scipy.interpolate import interp1d
+from scipy.interpolate import BSpline, interp1d
+from shapely.geometry import LineString
 
-from map_annotation.transforms import CoordTransformer
+from map_annotation.interpolation import (discretize_spline,
+                                          get_spline_parameters,
+                                          get_unique_nodes, interpolate,
+                                          make_parametric_path)
 
 
 class RoadElement:
-    RoadType = Enum("RoadType", ["URBAN", "CAR", "BIKE", "BUS"])
+    RoadType = Enum(
+        "RoadType",
+        ["RESIDENTIAL", "CAR", "BIKE_LANE", "CYCLE_STREET", "TRAM_BUS_LANE", "HIGHWAY"],
+    )
     AllowedAgent = Enum(
         "AllowedAgent", ["PEDESTRIAN", "CYCLIST", "CAR", "BUS", "TRAM", "OTHER"]
     )
-    _transformer = CoordTransformer()
+    RoadType_AllowedAgents_map = {
+        RoadType.RESIDENTIAL: [
+            AllowedAgent.PEDESTRIAN,
+            AllowedAgent.CYCLIST,
+            AllowedAgent.CAR,
+            AllowedAgent.OTHER,
+        ],
+        RoadType.CAR: [
+            AllowedAgent.CAR,
+            AllowedAgent.BUS,
+            AllowedAgent.OTHER,
+        ],
+        RoadType.BIKE_LANE: [
+            AllowedAgent.CYCLIST,
+        ],
+        RoadType.CYCLE_STREET: [
+            AllowedAgent.PEDESTRIAN,
+            AllowedAgent.CYCLIST,
+            AllowedAgent.CAR,
+            AllowedAgent.OTHER,
+        ],
+        RoadType.TRAM_BUS_LANE: [
+            AllowedAgent.BUS,
+            AllowedAgent.TRAM,
+            AllowedAgent.OTHER,
+        ],
+        RoadType.HIGHWAY: [
+            AllowedAgent.CAR,
+            AllowedAgent.BUS,
+            AllowedAgent.OTHER,
+        ],
+    }
 
     def __init__(self, element_id, road_type=None, allowed_agents=None):
         self.id = element_id
         self.road_type = road_type
         self.allowed_agents = allowed_agents
 
-        # instantiating this is slow, so this is a workaround
-        self.transformer = RoadElement._transformer
-
 
 class RoadElementCollection:
     def __init__(self):
-        # TODO why this coordinate system? --> psuedo-mercator projection
-        self.geod = pyproj.Geod(ellps="WGS84")  # Convert coordinates to meters
-
-        self.transformer = CoordTransformer()
-
+        # self.geod = pyproj.Geod(ellps="WGS84")  # Convert coordinates to meters
         self.init_elements()
 
     def init_elements(self):
@@ -46,6 +75,9 @@ class RoadElementCollection:
         return self.from_df(df)
 
     def from_df(self, df: pd.DataFrame):
+        raise NotImplementedError
+
+    def to_df(self):
         raise NotImplementedError
 
     def __iter__(self):
@@ -68,18 +100,19 @@ class RoadElementCollection:
 
 class RoadLine(RoadElement):
     BoundaryType = Enum("BoundaryType", ["SOLID", "DASHED"])
-    LineType = Enum("LineType", ["CENTERLINE", "BOUNDARY", "CONNECTOR"])
+    LineType = Enum(
+        "LineType", ["CENTERLINE", "BOUNDARY", "CONNECTOR", "START_LINE", "END_LINE"]
+    )
 
     def __init__(
         self,
-        boundary_id,
-        nodes,
+        boundary_id: int,
+        nodes: np.array,
         boundary_type: BoundaryType = None,
         road_type: RoadElement.RoadType = None,
         line_type: LineType = None,
         allowed_agents: list[RoadElement.AllowedAgent] = None,
     ):
-        # which frame should 'nodes' be in?
         super().__init__(boundary_id, road_type, allowed_agents)
         self.nodes = nodes
         self.boundary_type = boundary_type
@@ -88,69 +121,44 @@ class RoadLine(RoadElement):
     def __len__(self):
         return len(self.nodes)
 
-    def get_attr_in_frame(self, attr, frame):
-        if attr != "nodes":
-            raise ValueError(f"Only implemented for 'nodes'. Value passed: '{attr}'.")
-
-        attr_str = f"{attr}"
-        if frame == "global":
-            pass
-        else:
-            attr_str = attr_str + "_" + frame
-
-        return getattr(self, attr_str)
-
     @property
-    def nodes_utm(self):
-        # nodes are in (lon, lat) format, utm expectes (lat, lon)
-        lonlat = self.nodes_lonlat
-        nodes_utm = utm.from_latlon(lonlat[:, 1], lonlat[:, 0])
-        self.utm_zone = nodes_utm[2:]
-        return np.stack(nodes_utm[:2], axis=-1)
+    def geometry(self):
+        return LineString(self.nodes)
 
-    @property
-    def nodes_lonlat(self):
-        # nodes_global = list(
-        #    self.transformer.t_global_nl(self.nodes[:, 0], self.nodes[:, 1])
-        # )
-        nodes_global = self.transformer.t_global_nl(self.nodes[:, 0], self.nodes[:, 1])
-        nodes_global = np.vstack(nodes_global).T
-        return nodes_global
+    def get_spline_parameters(self, nodes=None, order=3, **kwargs):
+        nodes = self.nodes if nodes is None else nodes
+        return get_spline_parameters(nodes, order=order, **kwargs)
 
-    def _get_nodes_in_frame(self, frame):
-        if frame == "nl":
-            return self.nodes
-        elif frame == "lonlat":
-            return self.nodes_lonlat
-        elif frame == "utm":
-            return self.nodes_utm
-        else:
-            raise ValueError(f'Frame "{frame}" not valid.')
+    def interpolate(self, n_points=100, order=3, **kwargs):
+        return interpolate(self.nodes, n_points=n_points, order=order, **kwargs)
 
-    def interpolate(self, frame="utm", n_points=100, kind="linear"):
-        nodes = self._get_nodes_in_frame(frame)
+    def interp1d(self, n_points=100):
+        nodes = get_unique_nodes(self.nodes)
+        if len(nodes) <= 1:
+            raise ValueError(
+                "There must be at least two unique nodes to interpolate between"
+            )
 
-        path_t = np.linspace(0, 1, nodes.size // 2)
+        path_u = make_parametric_path(nodes)
+        interpolator = interp1d(path_u, nodes.T, kind="linear")
 
-        r = nodes.T
-        spline = interp1d(path_t, r, kind=kind)
-        t = np.linspace(np.min(path_t), np.max(path_t), n_points)
-        r = spline(t)
+        path_t = np.linspace(0, 1, n_points)
+        nodes_intp = interpolator(path_t).T
+        return nodes_intp
 
-        return r.T
+    def discretize(self, resolution, order=3, **kwargs):
+        # resolution is in m
+        assert resolution > 0, "Resolution must be greater than zero"
+        t, c, k = self.get_spline_parameters(order=order, **kwargs)
 
-    def discretize(self, resolution, interp_kind="cubic"):
-        assert resolution > 0, "Resolution must be non-negative"
-        n_points = math.ceil(len(self) / resolution) + 1
-        assert (
-            n_points > 1
-        ), "there must be more than one point to discretize the RoadLine - try lowering the resolution"
+        spline = BSpline(t, np.array(c).T, k)
+        xy = discretize_spline(spline, resolution)
 
-        # interpolate with number of points and calculate yaws
-        xy = self.interpolate(n_points=n_points, kind=interp_kind)
-        theta = [np.arctan2(p2.y - p1.y, p2.x, p1.x) for p1, p2 in zip(xy[:-1], xy[1:])]
+        theta = [
+            np.arctan2(p2[1] - p1[1], p2[0] - p1[0]) for p1, p2 in zip(xy[:-1], xy[1:])
+        ]
         theta.insert(0, 0.0)  # add yaw of 0 to first pose
         theta = np.array(theta)
 
-        poses = np.hstack(xy[-1, 1], theta[-1, 1])
+        poses = np.hstack((xy, theta[:, None]))
         return poses

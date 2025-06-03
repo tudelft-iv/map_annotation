@@ -1,11 +1,16 @@
+import ast
+
 import numpy as np
 
-from map_annotation.road_elements import RoadElementCollection, RoadLine
+from map_annotation.lanes import Lane
+from map_annotation.road_elements import (RoadElement, RoadElementCollection,
+                                          RoadLine)
+from map_annotation.utils import parse_str_to_list
 
 
 class Connectors(RoadElementCollection):
     """
-    Lanes class to handle all required lane operations
+    Class to handle lane connector functionality
     """
 
     def __init__(self):
@@ -16,15 +21,55 @@ class Connectors(RoadElementCollection):
         Retrieve lane information from labelled data.
         """
         self.elements = {}
-        self.element_ids = list(set(df["connector_id"]))
+        self.element_ids = list(set(df["connector_id"].astype(str).values))
 
-        # Retrieve lane data
-        for element_id in self.element_ids:
-            element_data = df[df["connector_id"] == element_id]
-            intersection_id = element_data["intersection_id"]
+        # Retrieve connector data
+        for idx, connector in df.iterrows():
+            element_id = str(connector["connector_id"])
+            intersection_id = str(connector["intersection_id"])
+            legal = connector["legal"]
+            lane_type = connector["lane_type"]
 
-            element_nodes = np.array(element_data["geometry"].tolist()[0].coords)[:, :2]
-            element = Connector(element_id, element_nodes, intersection_id)
+            source = str(connector["source"])
+            dest = str(connector["dest"])
+
+            element_nodes = np.array(connector["geometry"].coords)[:, :2]
+            centerline = RoadLine(
+                element_id,
+                element_nodes,
+                line_type=RoadLine.LineType.CONNECTOR,
+                road_type=lane_type,
+            )
+
+            lbound = np.array(list(ast.literal_eval(connector["left_boundary"])))
+            rbound = np.array(list(ast.literal_eval(connector["right_boundary"])))
+            left_boundary = RoadLine(
+                element_id,
+                np.array(lbound),
+                line_type=RoadLine.LineType.BOUNDARY,
+                road_type=lane_type,
+            )
+            right_boundary = RoadLine(
+                element_id,
+                np.array(rbound),
+                line_type=RoadLine.LineType.BOUNDARY,
+                road_type=lane_type,
+            )
+
+            polygon = np.array(list(ast.literal_eval(connector["polygon"])))
+
+            element = Connector(
+                element_id,
+                left_boundary,
+                right_boundary,
+                source,
+                dest,
+                legal,
+                intersection_id,
+                lane_type=lane_type,
+                polygon=polygon,
+                centerline=centerline,
+            )
             self.elements[element_id] = element
 
         return self
@@ -32,15 +77,11 @@ class Connectors(RoadElementCollection):
     def get_connectors_in_box(
         self,
         box,
-        frame="utm",
     ):
         """
         Select the lanes that are within the specified bounding box.
         """
-        if frame == "lon-lat":
-            pass
         connectors = self.elements
-
         return self._get_connectors_in_box(connectors, box)
 
     def _get_connectors_in_box(self, connectors, box):
@@ -72,12 +113,49 @@ class Connectors(RoadElementCollection):
         return [connector.discretize(resolution) for connector in self.elements]
 
 
-class Connector(RoadLine):
-    def __init__(self, connector_id, nodes, intersection_id=None):
-        super().__init__(connector_id, nodes, line_type=RoadLine.LineType.CONNECTOR)
-        self.intersection_id = intersection_id
+class Connector(Lane):
+    """
+    Class that implements lane connector functionality
+    """
 
-    @property
-    def centerline(self):
-        # Alias for the nodes
-        return self.nodes
+    def __init__(
+        self,
+        connector_id,
+        left_boundary,
+        right_boundary,
+        source,
+        dest,
+        legal,
+        intersection_id=None,
+        lane_type=None,
+        polygon=None,
+        centerline=None,
+    ):
+        self.legal = legal
+
+        if lane_type is not None:
+            lane_type = RoadElement.RoadType(lane_type)
+        allowed_agents = self._get_allowed_agents(lane_type)
+
+        super().__init__(
+            connector_id,
+            left_boundary,
+            right_boundary,
+            [source],
+            [dest],
+            allowed_agents,
+            lane_type,
+            polygon,
+            centerline,
+        )
+
+        self.intersection_id = intersection_id
+        self.source = source
+        self.dest = dest
+
+    def _get_allowed_agents(self, lane_type):
+        if not self.legal or lane_type is None:
+            return []
+
+        allowed_agents = RoadElement.RoadType_AllowedAgents_map[lane_type]
+        return allowed_agents

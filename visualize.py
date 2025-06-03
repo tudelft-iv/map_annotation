@@ -29,6 +29,8 @@ if __name__ == "__main__":
 
     print("Visualizing connectors...")
     lane_connectors = Connectors().load(os.path.join(input_dir, "connectors.gpkg"))
-    fig = visualize_connectors(lane_connectors, fig)
+    fig = visualize_connectors(lane_connectors, fig, plot_boundaries=False)
+    # fig = visualize_connectors(lane_connectors, fig, plot_boundaries=True)
 
+    # plt.savefig("maps_vis.png")
     plt.show()

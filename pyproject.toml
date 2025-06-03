@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = 'map_annotation'
-version = "0.1.1"
+version = "0.2.1"
 authors = [
+  { name = "H. Boekema", email="h.j.boekema@tudelft.nl" },
   { name = "B. Martens", email="b.k.w.martems@student.tudelft.nl" },
-  { name = "H. Boekema", email="h.j.boekema@tudelft.nl" }
 ] 
-description = "Small annotation for processing map annotations"
+description = "Package for processing map annotations"
 readme = "README.md"
 license = { file="LICENSE" }
 requires-python = ">=3.9"
@@ -22,8 +22,8 @@ dependencies = [
     "numpy>=1.23.0",
     "geopandas>=0.11.0",
     "utm>=0.7.0",
-    "scipy==1.10.1",
-    "tqdm==4.65.0",
+    "scipy>=1.10.1",
+    "tqdm>=4.65.0",
 ]
 
 [project.urls]
